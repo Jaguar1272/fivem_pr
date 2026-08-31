@@ -193,7 +193,6 @@ class Banner(commands.Cog):
         if message.author.bot or not getattr(message.channel, "category_id", None):
             return
 
-        # 관리자의 삭제 행위는 감지하지 않음
         if message.author.guild_permissions.administrator:
             return
 
@@ -219,7 +218,7 @@ class Banner(commands.Cog):
         if message.channel.category_id not in self.category_ids.values() or not message.channel.name.startswith("⚡ㆍ"):
             return
 
-        # 👑 [핵심 수정] 관리자 권한을 가진 유저는 배너 로직에서 완전 제외되어 자유롭게 개입 가능
+        # 관리자 예외 처리
         if message.author.guild_permissions.administrator:
             return
 
@@ -260,15 +259,38 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
-        # 4. 검토 대기 중 재작성 시도 차단
+        # 📱 4. [모바일 패치 반영] 검토 대기 중 분할 작성 자동 연동 처리
         if owner.id in self.pending_review:
+            prev_msg_id = self.pending_review[owner.id]
+            prev_msg = None
+            try:
+                prev_msg = await message.channel.fetch_message(prev_msg_id)
+            except Exception:
+                pass
+
+            # 기존 메시지 + 새로 작성한 메시지의 내용 및 사진 합산 검사
+            has_attachment = (len(message.attachments) > 0) or (prev_msg and len(prev_msg.attachments) > 0)
+            combined_content = ((prev_msg.content if prev_msg else "") + " " + message.content).strip()
+            has_link = ("http://" in combined_content) or ("https://" in combined_content)
+            content_clean = combined_content.replace("@everyone", "").replace("@here", "").strip()
+            has_long_text = len(content_clean) >= 10
+
+            # 합쳐서 정상 홍보글 조건(10자 이상 + 이미지/링크)에 해당하면 자동 승인!
+            if has_long_text and (has_attachment or has_link):
+                del self.pending_review[owner.id]
+                self.daily_activity[str(owner.id)] = today_date
+                self.save_daily_activity()
+                await message.channel.send(f"✅ {message.author.mention} 글과 사진이 연속으로 감지되어 오늘 홍보글이 정상 등록되었습니다! (모바일 분할 작성 자동 승인)", delete_after=5)
+                return
+
+            # 합쳤는데도 조건 미달이면 중복 작성 차단
             reason = "검토 대기 중 홍보글 중복 작성 시도"
             await message.delete()
             await message.channel.send(f"⚠️ {message.author.mention} 현재 스태프 검토 중인 홍보글이 있습니다. 검토 완료 후 이용해주세요.", delete_after=5)
             await self.send_penalty_log(reason, message, owner)
             return
 
-        # 5. 하루 1회 작성 제한 초과 및 글 삭제 후 재작성 꼼수 차단
+        # 5. 하루 1회 작성 제한 초과 차단
         owner_id_str = str(owner.id)
         if self.daily_activity.get(owner_id_str) == today_date:
             reason = f"하루 1회 작성 제한 초과 (삭제 후 재작성 꼼수 시도 포함)"
@@ -288,9 +310,10 @@ class Banner(commands.Cog):
             self.save_daily_activity()
             return
 
+        # 글만 올렸거나 사진만 올린 경우 검토 대기로 등록
         self.pending_review[owner.id] = message.id
         await self.send_to_review_channel(message, owner, today_date)
-        await message.channel.send(f"ℹ️ {message.author.mention} 작성하신 짧은 홍보글은 스태프 검토 채널로 전달되었습니다.", delete_after=5)
+        await message.channel.send(f"ℹ️ {message.author.mention} 작성하신 글은 검토 대기 상태입니다. (모바일 유저의 경우 지금 바로 사진을 추가로 올리시면 자동 승인됩니다!)", delete_after=5)
 
     @commands.group(name="배너", invoke_without_command=True)
     async def banner(self, ctx):
