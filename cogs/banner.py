@@ -163,10 +163,14 @@ class Banner(commands.Cog):
     async def send_to_review_channel(self, message: discord.Message, owner: discord.Member, today_date: str):
         review_channel = self.bot.get_channel(self.review_channel_id)
         if not review_channel:
-            return
+            try:
+                review_channel = await self.bot.fetch_channel(self.review_channel_id)
+            except Exception as e:
+                print(f"[배너 ERROR] 검토 채널(ID: {self.review_channel_id})을 불러올 수 없습니다: {e}")
+                return
 
         embed = discord.Embed(
-            title="🔍 짧은 홍보글 승인 검토 요청",
+            title="🔍 짧 홍보글 승인 검토 요청",
             description=f"유저가 작성한 짧은 홍보글이 감지되었습니다. 아래 버튼으로 승인 여부를 결정해 주세요.",
             color=discord.Color.gold(),
             timestamp=discord.utils.utcnow()
@@ -259,7 +263,7 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
-        # 📱 4. [모바일 패치 반영] 검토 대기 중 분할 작성 자동 연동 처리
+        # 4. 검토 대기 중 분할 작성 자동 연동 처리
         if owner.id in self.pending_review:
             prev_msg_id = self.pending_review[owner.id]
             prev_msg = None
