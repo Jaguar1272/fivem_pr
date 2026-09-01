@@ -13,7 +13,7 @@ class NoticeModal(discord.ui.Modal):
         }
         super().__init__(title=titles.get(action_type, "공지 관리"))
 
-        # 공통 필드: 채널 ID
+        # 채널 ID 입력
         self.channel_id_input = discord.ui.TextInput(
             label="📢 공지할 채널 ID",
             placeholder="예: 123456789012345678 (비워두면 현재 채널)",
@@ -63,7 +63,6 @@ class NoticeModal(discord.ui.Modal):
                 self.add_item(self.content_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 대상 채널 구하기
         ch_id = self.channel_id_input.value.strip()
         channel = interaction.guild.get_channel(int(ch_id)) if ch_id and ch_id.isdigit() else interaction.channel
 
@@ -105,11 +104,16 @@ class NoticeModal(discord.ui.Modal):
                 await target_msg.delete()
                 await interaction.response.send_message("🗑️ 공지 메시지를 삭제했습니다.", ephemeral=True)
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        print(f"[NoticeModal Error] {error}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ 처리 중 오류가 발생했습니다. 콘솔을 확인해 주세요.", ephemeral=True)
+
 
 # --- 공지사항 관리 패널 버튼 ---
 class NoticePanelView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None) # 지속적 뷰 설정
 
     @discord.ui.button(label="일반 공지", style=discord.ButtonStyle.primary, emoji="➕", custom_id="btn_notice_normal")
     async def btn_normal(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -131,7 +135,15 @@ class NoticePanelView(discord.ui.View):
 class NoticeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot.add_view(NoticePanelView())
+        self.view = NoticePanelView()
+
+    async def cog_load(self):
+        """코그가 로드/리로드 될 때 뷰를 지속적(Persistent)으로 등록합니다."""
+        self.bot.add_view(self.view)
+
+    async def cog_unload(self):
+        """코그가 언로드 될 때 이전 뷰 리스너를 정지시킵니다."""
+        self.view.stop()
 
     @commands.command(name="공지패널")
     @commands.has_permissions(administrator=True)
@@ -141,7 +153,7 @@ class NoticeCog(commands.Cog):
             description="관리자 전용 도구입니다.",
             color=discord.Color.dark_theme_gray()
         )
-        await ctx.send(embed=embed, view=NoticePanelView())
+        await ctx.send(embed=embed, view=self.view)
 
 async def setup(bot):
     await bot.add_cog(NoticeCog(bot))
