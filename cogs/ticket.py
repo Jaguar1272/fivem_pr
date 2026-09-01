@@ -2,9 +2,39 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+import io
 
 # 고객센터 로그 채널 ID
 LOG_CHANNEL_ID = 1491268664564121773
+
+
+# --- 대화 내역을 .txt 파일로 생성하는 함수 ---
+async def create_ticket_transcript(channel: discord.TextChannel) -> discord.File:
+    lines = [
+        "==================================================",
+        f" 📝 티켓 대화 기록: #{channel.name}",
+        f" 📅 추출 시각: {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)",
+        "==================================================\n"
+    ]
+
+    # 채널의 모든 메시지를 과거순(oldest_first=True)으로 수집
+    async for msg in channel.history(limit=None, oldest_first=True):
+        timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        author = f"{msg.author.name} ({msg.author.id})"
+        content = msg.clean_content or ""
+
+        attachments = ""
+        if msg.attachments:
+            attachments = "\n   📎 [첨부파일]: " + ", ".join([att.url for att in msg.attachments])
+
+        lines.append(f"[{timestamp}] {author}\n: {content}{attachments}\n")
+
+    transcript_text = "\n".join(lines)
+    
+    # 메모리 버퍼에 txt 데이터 담기
+    buffer = io.BytesIO(transcript_text.encode('utf-8'))
+    return discord.File(fp=buffer, filename=f"{channel.name}_대화기록.txt")
+
 
 # 티켓 안에서 사용되는 '티켓 닫기' 버튼
 class TicketControlView(discord.ui.View):
@@ -13,9 +43,12 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="🔒 티켓 닫기", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⚠️ 티켓을 닫습니다. 5초 뒤 채널이 완전히 삭제됩니다.", ephemeral=False)
+        await interaction.response.send_message("⏳ 대화 내역을 추출하는 중입니다... 5초 뒤 채널이 삭제됩니다.", ephemeral=False)
         
-        # 로그 채널로 닫기 기록 전송
+        # 1. 대화 기록 .txt 파일 생성
+        transcript_file = await create_ticket_transcript(interaction.channel)
+
+        # 2. 로그 채널로 닫기 기록 및 .txt 파일 전송
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             embed = discord.Embed(
@@ -25,10 +58,13 @@ class TicketControlView(discord.ui.View):
             )
             embed.add_field(name="📄 삭제된 채널명", value=f"`{interaction.channel.name}`", inline=True)
             embed.add_field(name="🛡️ 종료 처리자", value=f"{interaction.user.mention} (`{interaction.user.name}`)", inline=True)
-            await log_channel.send(embed=embed)
+            
+            # .txt 파일 첨부 전송
+            await log_channel.send(embed=embed, file=transcript_file)
 
         await asyncio.sleep(5)
         await interaction.channel.delete(reason=f"티켓 종료 (요청자: {interaction.user.name})")
+
 
 # 메인 채널에 띄워두는 '문의하기' 버튼
 class TicketPanelView(discord.ui.View):
