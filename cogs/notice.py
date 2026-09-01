@@ -107,13 +107,13 @@ class NoticeModal(discord.ui.Modal):
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         print(f"[NoticeModal Error] {error}")
         if not interaction.response.is_done():
-            await interaction.response.send_message("❌ 처리 중 오류가 발생했습니다. 콘솔을 확인해 주세요.", ephemeral=True)
+            await interaction.response.send_message("❌ 처리 중 오류가 발생했습니다.", ephemeral=True)
 
 
 # --- 공지사항 관리 패널 버튼 ---
 class NoticePanelView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None) # 지속적 뷰 설정
+        super().__init__(timeout=None) # 지속적 버튼 유지
 
     @discord.ui.button(label="일반 공지", style=discord.ButtonStyle.primary, emoji="➕", custom_id="btn_notice_normal")
     async def btn_normal(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -135,25 +135,28 @@ class NoticePanelView(discord.ui.View):
 class NoticeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.view = NoticePanelView()
 
     async def cog_load(self):
-        """코그가 로드/리로드 될 때 뷰를 지속적(Persistent)으로 등록합니다."""
-        self.bot.add_view(self.view)
+        """코그 로드/리로드 시 봇에 패널 뷰를 등록하여 기존 메시지 버튼도 유지"""
+        self.bot.add_view(NoticePanelView())
 
-    async def cog_unload(self):
-        """코그가 언로드 될 때 이전 뷰 리스너를 정지시킵니다."""
-        self.view.stop()
-
-    @commands.command(name="공지패널")
-    @commands.has_permissions(administrator=True)
+    @commands.command(name="공지패널", aliases=["공지관리"])
     async def setup_notice_panel(self, ctx):
+        # 데코레이터 대신 함수 내부에서 권한 확인 (권한 부족 시 조용한 무반응 현상 방지)
+        if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_messages:
+            return await ctx.send("❌ 이 명령어를 실행하려면 디스코드 **'관리자'** 또는 **'메시지 관리'** 권한이 필요합니다.")
+
         embed = discord.Embed(
             title="📢 공지사항 관리 패널",
             description="관리자 전용 도구입니다.",
             color=discord.Color.dark_theme_gray()
         )
-        await ctx.send(embed=embed, view=self.view)
+        # 매번 완전히 새로운 NoticePanelView 객체를 생성하여 전송
+        await ctx.send(embed=embed, view=NoticePanelView())
+
+    async def cog_command_error(self, ctx, error):
+        await ctx.send(f"⚠️ 명령어 처리 중 예외 발생: `{error}`")
+        print(f"[NoticeCog Error] {error}")
 
 async def setup(bot):
     await bot.add_cog(NoticeCog(bot))
