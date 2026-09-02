@@ -1,7 +1,8 @@
 import os
 import json
+import asyncio
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 
 # --- 1. 짧은 홍보글 승인/거절 검토 버튼 뷰 ---
@@ -67,7 +68,7 @@ class PromoReviewView(discord.ui.View):
             pass
 
 
-# --- 2. 패널 전용 모달 (생성/삭제/초기화) ---
+# --- 2. 패널 전용 모달 ---
 class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
     def __init__(self, cog):
         super().__init__()
@@ -111,9 +112,15 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         if not channel_name.startswith("⚡ㆍ"):
             channel_name = f"⚡ㆍ{channel_name}"
 
+        # 현재 시각이 금지 시간대라면 생성 시에도 바로 send_messages=False 처리
+        kst = timezone(timedelta(hours=9))
+        now = datetime.now(kst)
+        current_minute = now.hour * 60 + now.minute
+        is_forbidden_time = (31 <= current_minute <= 509)
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
-            target_user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            target_user: discord.PermissionOverwrite(read_messages=True, send_messages=not is_forbidden_time),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
         }
 
@@ -238,9 +245,9 @@ class BannerPanelView(discord.ui.View):
 class Banner(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.log_channel_id = 1417208003027009636       # 위반 감지 로그 채널 ID
-        self.review_channel_id = 1500079277977112606    # 🔍 짧은 홍보글 검토 채널 ID
-        self.exempt_channel_ids = [1520094510464499887]  # 예외 채널 ID
+        self.log_channel_id = 1417208003027009636
+        self.review_channel_id = 1500079277977112606
+        self.exempt_channel_ids = [1520094510464499887]
         self.category_ids = {
             1: 1541419838977745037, 
             2: 1493997022108319827, 
@@ -249,11 +256,62 @@ class Banner(commands.Cog):
         }
         self.data_file = "daily_activity.json"
         self.daily_activity = self.load_daily_activity()
-        self.pending_review = {}  # owner_id: message_id
+        self.pending_review = {}
+        self.is_locked = None  # 자동 잠금 상태 추적 플래그
+
+        # 백그라운드 태스크 시작
+        self.auto_lock_task.start()
+
+    def cog_unload(self):
+        self.auto_lock_task.cancel()
 
     async def cog_load(self):
-        """코그 로드 시 persistent 뷰 등록"""
         self.bot.add_view(BannerPanelView(self))
+
+    # --- ⏰ 자동 잠금/해제 백그라운드 루프 (1분 간격 검사) ---
+    @tasks.loop(minutes=1)
+    async def auto_lock_task(self):
+        await self.bot.wait_until_ready()
+
+        kst = timezone(timedelta(hours=9))
+        now = datetime.now(kst)
+        current_minute = now.hour * 60 + now.minute
+
+        # 00:31 ~ 08:29 (분 기준 31 ~ 509)
+        should_lock = (31 <= current_minute <= 509)
+
+        # 이미 원하는 상태인 경우 불필요한 API 요청을 하지 않음
+        if self.is_locked == should_lock:
+            return
+
+        self.is_locked = should_lock
+
+        for guild in self.bot.guilds:
+            for channel in guild.text_channels:
+                if channel.category_id in self.category_ids.values() and channel.name.startswith("⚡ㆍ"):
+                    owner = self.get_channel_owner(channel)
+                    if not owner:
+                        continue
+
+                    overwrite = channel.overwrites_for(owner)
+
+                    # 잠금 처리 (00:31 진입 시)
+                    if should_lock and overwrite.send_messages != False:
+                        overwrite.send_messages = False
+                        try:
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 활동 금지 시간 (자동 잠금)")
+                            await asyncio.sleep(0.3)  # API Rate Limit 방지
+                        except Exception as e:
+                            print(f"[배너 자동잠금 에러] {channel.name}: {e}")
+
+                    # 잠금 해제 (08:30 진입 시)
+                    elif not should_lock and overwrite.send_messages != True:
+                        overwrite.send_messages = True
+                        try:
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 활동 가능 시간 (자동 해제)")
+                            await asyncio.sleep(0.3)  # API Rate Limit 방지
+                        except Exception as e:
+                            print(f"[배너 자동해제 에러] {channel.name}: {e}")
 
     def load_daily_activity(self):
         if os.path.exists(self.data_file):
