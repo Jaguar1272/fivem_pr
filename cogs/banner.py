@@ -68,7 +68,7 @@ class PromoReviewView(discord.ui.View):
             pass
 
 
-# --- 2. 패널 전용 모달 ---
+# --- 2. 패널 전용 모달 (생성/삭제/초기화/공지) ---
 class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
     def __init__(self, cog):
         super().__init__()
@@ -112,7 +112,6 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         if not channel_name.startswith("⚡ㆍ"):
             channel_name = f"⚡ㆍ{channel_name}"
 
-        # 현재 시각이 금지 시간대라면 생성 시에도 바로 send_messages=False 처리
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
@@ -222,6 +221,62 @@ class BannerResetModal(discord.ui.Modal, title="🔄 배너 제한/검토 초기
             await interaction.response.send_message(f"ℹ️ {target_user.mention}님은 오늘 등록된 배너 작성/검토 기록이 없습니다.", ephemeral=True)
 
 
+class BannerNoticeModal(discord.ui.Modal, title="📢 배너 이용자 전체 공지"):
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+
+    title_input = discord.ui.TextInput(
+        label="📌 공지 제목",
+        placeholder="공지의 제목을 입력하세요.",
+        required=True,
+        max_length=100
+    )
+    content_input = discord.ui.TextInput(
+        label="📝 공지 내용",
+        style=discord.TextStyle.paragraph,
+        placeholder="모든 배너 채널에 전달할 안내 내용을 입력하세요.",
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # 메시지 전송 시간이 걸릴 수 있으므로 응답 대기
+        await interaction.response.defer(ephemeral=True)
+
+        guild = interaction.guild
+        notice_title = self.title_input.value.strip()
+        notice_content = self.content_input.value.strip()
+
+        embed = discord.Embed(
+            title=f"📢 [배너 공지] {notice_title}",
+            description=notice_content,
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow()
+        )
+        embed.set_footer(text=f"발송 스태프: {interaction.user.display_name}")
+
+        success_count = 0
+        fail_count = 0
+
+        for channel in guild.text_channels:
+            if channel.category_id in self.cog.category_ids.values() and channel.name.startswith("⚡ㆍ"):
+                try:
+                    owner = self.cog.get_channel_owner(channel)
+                    mention_text = owner.mention if owner else ""
+                    await channel.send(content=mention_text, embed=embed)
+                    success_count += 1
+                    await asyncio.sleep(0.3)  # API Rate Limit 방지
+                except Exception:
+                    fail_count += 1
+
+        await interaction.followup.send(
+            f"✅ **전체 배너 공지 발송 완료**\n"
+            f"• 성공: `{success_count}`개 채널\n"
+            f"• 실패: `{fail_count}`개 채널",
+            ephemeral=True
+        )
+
+
 # --- 3. 배너 관리 패널 버튼 뷰 ---
 class BannerPanelView(discord.ui.View):
     def __init__(self, cog):
@@ -240,6 +295,10 @@ class BannerPanelView(discord.ui.View):
     async def btn_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BannerResetModal(self.cog))
 
+    @discord.ui.button(label="전체 공지", style=discord.ButtonStyle.success, emoji="📢", custom_id="btn_panel_banner_notice")
+    async def btn_notice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BannerNoticeModal(self.cog))
+
 
 # --- 4. 메인 Cog 클래스 ---
 class Banner(commands.Cog):
@@ -257,9 +316,8 @@ class Banner(commands.Cog):
         self.data_file = "daily_activity.json"
         self.daily_activity = self.load_daily_activity()
         self.pending_review = {}
-        self.is_locked = None  # 자동 잠금 상태 추적 플래그
+        self.is_locked = None
 
-        # 백그라운드 태스크 시작
         self.auto_lock_task.start()
 
     def cog_unload(self):
@@ -268,7 +326,6 @@ class Banner(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(BannerPanelView(self))
 
-    # --- ⏰ 자동 잠금/해제 백그라운드 루프 (1분 간격 검사) ---
     @tasks.loop(minutes=1)
     async def auto_lock_task(self):
         await self.bot.wait_until_ready()
@@ -277,10 +334,8 @@ class Banner(commands.Cog):
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
 
-        # 00:31 ~ 08:29 (분 기준 31 ~ 509)
         should_lock = (31 <= current_minute <= 509)
 
-        # 이미 원하는 상태인 경우 불필요한 API 요청을 하지 않음
         if self.is_locked == should_lock:
             return
 
@@ -295,21 +350,19 @@ class Banner(commands.Cog):
 
                     overwrite = channel.overwrites_for(owner)
 
-                    # 잠금 처리 (00:31 진입 시)
                     if should_lock and overwrite.send_messages != False:
                         overwrite.send_messages = False
                         try:
                             await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 활동 금지 시간 (자동 잠금)")
-                            await asyncio.sleep(0.3)  # API Rate Limit 방지
+                            await asyncio.sleep(0.3)
                         except Exception as e:
                             print(f"[배너 자동잠금 에러] {channel.name}: {e}")
 
-                    # 잠금 해제 (08:30 진입 시)
                     elif not should_lock and overwrite.send_messages != True:
                         overwrite.send_messages = True
                         try:
                             await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 활동 가능 시간 (자동 해제)")
-                            await asyncio.sleep(0.3)  # API Rate Limit 방지
+                            await asyncio.sleep(0.3)
                         except Exception as e:
                             print(f"[배너 자동해제 에러] {channel.name}: {e}")
 
@@ -458,7 +511,6 @@ class Banner(commands.Cog):
 
         owner = self.get_channel_owner(message.channel)
 
-        # 1. 타인 배너 채널 작성 차단
         if owner and message.author.id != owner.id:
             reason = f"타인 배너 채널 작성 시도 (채널 소유자: {owner.display_name})"
             await message.delete()
@@ -475,7 +527,6 @@ class Banner(commands.Cog):
         current_minute = now.hour * 60 + now.minute
         today_date = now.strftime("%Y-%m-%d")
 
-        # 2. 금지 시간대 검사 (00:31 ~ 08:29)
         if 31 <= current_minute <= 509:
             reason = "배너 활동 금지 시간 활동 (00:31~08:29)"
             await message.delete()
@@ -484,7 +535,6 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
-        # 3. 답장 꼼수 검사
         if message.reference:
             reason = "답장(끌올) 기능을 이용한 꼼수 활동"
             await message.delete()
@@ -493,7 +543,6 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
-        # 4. 검토 대기 중 분할 작성 자동 연동 처리
         if owner.id in self.pending_review:
             prev_msg_id = self.pending_review[owner.id]
             prev_msg = None
@@ -521,7 +570,6 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
-        # 5. 하루 1회 작성 제한 초과 차단
         owner_id_str = str(owner.id)
         if self.daily_activity.get(owner_id_str) == today_date:
             reason = f"하루 1회 작성 제한 초과 (삭제 후 재작성 꼼수 시도 포함)"
@@ -545,7 +593,6 @@ class Banner(commands.Cog):
         await self.send_to_review_channel(message, owner, today_date)
         await message.channel.send(f"ℹ️ {message.author.mention} 작성하신 글은 검토 대기 상태입니다. (모바일 유저의 경우 지금 바로 사진을 추가로 올리시면 자동 승인됩니다!)", delete_after=5)
 
-    # --- 배너 관리 패널 전송 명령어 (!배너패널 또는 !배너) ---
     @commands.command(name="배너패널", aliases=["배너"])
     async def setup_banner_panel(self, ctx):
         if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_channels:
@@ -557,7 +604,8 @@ class Banner(commands.Cog):
                 "스태프 전용 배너 컨트롤 도구입니다.\n\n"
                 "• **➕ 배너 생성**: 유저, 카테고리(1~4), 채널명을 입력하여 전용 배너 채널을 생성합니다.\n"
                 "• **🗑️ 배너 삭제**: 유저, 채널 ID, 삭제 사유를 입력하여 배너 채널을 삭제합니다.\n"
-                "• **🔄 제한 초기화**: 특정 유저의 하루 작성 제한 및 검토 대기 상태를 리셋합니다."
+                "• **🔄 제한 초기화**: 특정 유저의 하루 작성 제한 및 검토 대기 상태를 리셋합니다.\n"
+                "• **📢 전체 공지**: 등록된 모든 배너 채널에 일괄 안내 메시지를 전송합니다."
             ),
             color=discord.Color.dark_embed()
         )
