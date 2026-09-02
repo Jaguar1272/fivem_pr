@@ -117,9 +117,16 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         current_minute = now.hour * 60 + now.minute
         is_forbidden_time = (31 <= current_minute <= 509)
 
+        # 권한 설정: @everyone 및 탑배너 등 기타 역할은 카테고리/기본 차단 상속
+        # 오직 배너 신청자 본인에게만 메시지 작성 및 첨부 권한 명시 부여
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
-            target_user: discord.PermissionOverwrite(read_messages=True, send_messages=not is_forbidden_time),
+            target_user: discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=not is_forbidden_time,
+                attach_files=True,
+                embed_links=True
+            ),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
         }
 
@@ -157,7 +164,7 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 name="1️⃣ 하루 1회 작성 원칙 (00:00 기준)",
                 value=(
                     "• 모든 배너 채널은 **1일 1회**만 홍보글 작성이 가능합니다.\n"
-                    "• **작성한 글을 삭제하더라도 당일 재작성 권한은 복구되지 않습니다.** (꼼수 재작성 방지)\n"
+                    "• **작성한 글을 삭제하더라도 당일 재작성 권한은 복구되지 않습니다.**\n"
                     "• 답장(Reply) 및 끌올 기능을 활용한 편법 홍보는 경고 없이 삭제 및 제재 대상입니다."
                 ),
                 inline=False
@@ -196,9 +203,9 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 ),
                 inline=False
             )
-            rules_embed.set_footer(text="문의 및 이의신청은 스태프 문의 채널(티켓)을 이용해 주세요.")
+            rules_embed.set_footer(text="문의 및 이의신청은 스태프 문의 채널을 이용해 주세요.")
 
-            # --- [전송 처리] DM 전송 실패 시 해당 채널에 전송 ---
+            # --- [전송 처리] DM 전송 실패 시 생성된 채널에 직접 게시 ---
             dm_msg = ""
             try:
                 await target_user.send(embed=rules_embed)
@@ -414,7 +421,6 @@ class Banner(commands.Cog):
         self.data_file = "daily_activity.json"
         self.daily_activity = self.load_daily_activity()
         self.pending_review = {}
-        self.is_locked = None
 
         self.auto_lock_task.start()
 
@@ -424,20 +430,17 @@ class Banner(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(BannerPanelView(self))
 
-    @tasks.loop(minutes=1)
-    async def auto_lock_task(self):
-        await self.bot.wait_until_ready()
-
+    # --- [실제 디스코드 채널 권한 대조 기반 권한 동기화 함수] ---
+    async def sync_all_banner_permissions(self) -> tuple[int, int]:
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
 
+        # 00:31 ~ 08:29 사이는 배너 잠금 시간
         should_lock = (31 <= current_minute <= 509)
 
-        if self.is_locked == should_lock:
-            return
-
-        self.is_locked = should_lock
+        synced_count = 0
+        skipped_count = 0
 
         for guild in self.bot.guilds:
             for channel in guild.text_channels:
@@ -447,22 +450,37 @@ class Banner(commands.Cog):
                         continue
 
                     overwrite = channel.overwrites_for(owner)
+                    current_send_perm = overwrite.send_messages
 
-                    if should_lock and overwrite.send_messages != False:
+                    # 잠금 시간인데 권한이 꺼져있지 않거나 설정이 안 된 경우 -> 잠금
+                    if should_lock and current_send_perm != False:
                         overwrite.send_messages = False
                         try:
-                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 활동 금지 시간 (자동 잠금)")
-                            await asyncio.sleep(0.3)
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 시간 동기화 (자동 잠금)")
+                            synced_count += 1
+                            await asyncio.sleep(0.2)
                         except Exception as e:
-                            print(f"[배너 자동잠금 에러] {channel.name}: {e}")
+                            print(f"[동기화 에러] {channel.name}: {e}")
 
-                    elif not should_lock and overwrite.send_messages != True:
+                    # 작성 가능 시간인데 권한이 켜져있지 않은 경우 -> 해제
+                    elif not should_lock and current_send_perm != True:
                         overwrite.send_messages = True
                         try:
-                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 활동 가능 시간 (자동 해제)")
-                            await asyncio.sleep(0.3)
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 시간 동기화 (자동 해제)")
+                            synced_count += 1
+                            await asyncio.sleep(0.2)
                         except Exception as e:
-                            print(f"[배너 자동해제 에러] {channel.name}: {e}")
+                            print(f"[동기화 에러] {channel.name}: {e}")
+                    else:
+                        skipped_count += 1
+
+        return synced_count, skipped_count
+
+    # --- [1분 주기 태스크: 수동 변경 시에도 실제 채널 권한 대조하여 자동 교정] ---
+    @tasks.loop(minutes=1)
+    async def auto_lock_task(self):
+        await self.bot.wait_until_ready()
+        await self.sync_all_banner_permissions()
 
     def load_daily_activity(self):
         if os.path.exists(self.data_file):
@@ -717,6 +735,25 @@ class Banner(commands.Cog):
             color=discord.Color.dark_embed()
         )
         await ctx.send(embed=embed, view=BannerPanelView(self))
+
+    @commands.command(name="배너동기화", aliases=["동기화"])
+    async def sync_banner_command(self, ctx):
+        if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_channels:
+            return await ctx.send("❌ 이 명령어를 실행하려면 관리자 권한이 필요합니다.")
+
+        msg = await ctx.send("🔄 현재 시간 기준으로 모든 배너 채널 권한을 동기화 중입니다...")
+        synced, skipped = await self.sync_all_banner_permissions()
+
+        kst = timezone(timedelta(hours=9))
+        now_str = datetime.now(kst).strftime("%H:%M")
+        
+        await msg.edit(
+            content=(
+                f"✅ **배너 채널 권한 동기화 완료** (현재 시간: `{now_str}`)\n"
+                f"• 수정/동기화된 채널: `{synced}`개\n"
+                f"• 이미 정상인 채널: `{skipped}`개"
+            )
+        )
 
 async def setup(bot):
     await bot.add_cog(Banner(bot))
