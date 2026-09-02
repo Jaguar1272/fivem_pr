@@ -37,7 +37,7 @@ class PromoReviewView(discord.ui.View):
         try:
             await self.owner.send(f"🎉 **#{self.target_message.channel.name}** 채널의 배너 홍보글이 스태프 검토를 통해 정상 승인되었습니다!")
         except discord.Forbidden:
-            pass
+            await self.target_message.channel.send(f"🎉 {self.owner.mention} 님의 배너 홍보글이 스태프 검토를 통해 정상 승인되었습니다!", delete_after=10)
 
     @discord.ui.button(label="❌ 거절 (삭제)", style=discord.ButtonStyle.danger, custom_id="btn_promo_reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -65,7 +65,7 @@ class PromoReviewView(discord.ui.View):
         try:
             await self.owner.send(f"⚠️ **#{self.target_message.channel.name}** 채널의 홍보글이 스태프 검토 결과 규정 미달로 삭제되었습니다.")
         except discord.Forbidden:
-            pass
+            await self.target_message.channel.send(f"⚠️ {self.owner.mention} 님의 홍보글이 스태프 검토 결과 규정 미달로 삭제되었습니다.", delete_after=10)
 
 
 # --- 2. 패널 전용 모달 (생성/삭제/초기화/공지) ---
@@ -131,7 +131,7 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 topic=f"owner_id:{target_user.id}"
             )
 
-            # --- [추가] 배너 역할 부여 ---
+            # --- [역할 지급] 배너 역할 부여 ---
             role = guild.get_role(self.cog.banner_role_id)
             role_msg = ""
             if role:
@@ -142,8 +142,76 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                     print(f"[배너] 역할 지급 실패: {e}")
                     role_msg = "\n⚠️ 역할 지급 권한이 부족하여 역할을 부여하지 못했습니다."
 
+            # --- [규정 Embed 작성] ---
+            rules_embed = discord.Embed(
+                title="📜 [홍보나라] 배너 채널 생성 및 상세 이용 규정",
+                description=(
+                    f"안녕하세요, **{target_user.display_name}**님!\n"
+                    f"요청하신 배너 채널 **{channel.mention}** 이(가) 성공적으로 개설되었습니다.\n\n"
+                    f"⚠️ **아래 규정을 숙지하지 않아 발생한 불이익(메시지 삭제, 채널 폐쇄, 역할 회수)은 본인에게 책임이 있습니다.**"
+                ),
+                color=discord.Color.blue(),
+                timestamp=discord.utils.utcnow()
+            )
+            rules_embed.add_field(
+                name="1️⃣ 하루 1회 작성 원칙 (00:00 기준)",
+                value=(
+                    "• 모든 배너 채널은 **1일 1회**만 홍보글 작성이 가능합니다.\n"
+                    "• **작성한 글을 삭제하더라도 당일 재작성 권한은 복구되지 않습니다.** (꼼수 재작성 방지)\n"
+                    "• 답장(Reply) 및 끌올 기능을 활용한 편법 홍보는 경고 없이 삭제 및 제재 대상입니다."
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="2️⃣ 활동 금지 시간 준수 (자동 잠금)",
+                value=(
+                    "• **매일 00:31 ~ 08:29**는 서버 배너 활동 금지 시간입니다.\n"
+                    "• 해당 시간대에는 채널 쓰기 권한이 자동 차단되며, 우회 작성 시 즉시 삭제 처리됩니다."
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="3️⃣ 홍보글 작성 양식 및 승인 기준",
+                value=(
+                    "• **필수 구성**: 공백 제외 10자 이상의 설명 + (이미지/첨부파일 1개 이상 또는 초대/웹 링크)\n"
+                    "• **모바일 유저 안내**: 텍스트와 사진을 분할 등록할 경우, 사진 추가 작성 시 자동 연동 승인됩니다.\n"
+                    "• **스태프 심사**: 규격 미달(짧은 글, 성의 없는 내용)은 검토 채널로 이관되어 승인 후 게시됩니다."
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="4️⃣ 엄격한 금지 사항",
+                value=(
+                    "• **채널 침범 금지**: 본인 소유 채널 외 타인의 배너 채널에 메시지 작성 절대 불가\n"
+                    "• **유해 콘텐츠 금지**: 음란물, 폭력, 정치/종교 논란, 비하, 사기/낚시성 링크 금지\n"
+                    "• **무단 도용 금지**: 타 서버 배너, 명칭, 디자인 무단 도용 및 허위 사실 유포 금지"
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="5️⃣ 위반 시 제재 및 채널 삭제 기준",
+                value=(
+                    "• 규정 위반 적발 시 사전 통보 없이 홍보글 삭제 및 **배너 채널 즉시 삭제**\n"
+                    "• 배너 권한 역할(`🎗️`) 회수 및 위반 누적 시 서버 홍보 자격 영구 박탈"
+                ),
+                inline=False
+            )
+            rules_embed.set_footer(text="문의 및 이의신청은 스태프 문의 채널(티켓)을 이용해 주세요.")
+
+            # --- [전송 처리] DM 전송 실패 시 해당 채널에 전송 ---
+            dm_msg = ""
+            try:
+                await target_user.send(embed=rules_embed)
+                dm_msg = "\n📩 유저에게 상세 배너 이용 규정 DM이 전송되었습니다."
+            except discord.Forbidden:
+                await channel.send(
+                    content=f"🔔 {target_user.mention} 님, DM 수신이 차단되어 있어 해당 채널에 배너 이용 규정을 게시합니다.",
+                    embed=rules_embed
+                )
+                dm_msg = "\n⚠️ 유저의 DM이 차단되어 생성된 배너 채널에 직접 규정을 전송했습니다."
+
             await interaction.response.send_message(
-                f"✅ {target_user.mention}님의 배너 채널({channel.mention})이 성공적으로 생성되었습니다!{role_msg}",
+                f"✅ {target_user.mention}님의 배너 채널({channel.mention})이 성공적으로 생성되었습니다!{role_msg}{dm_msg}",
                 ephemeral=True
             )
         except Exception as e:
@@ -194,9 +262,9 @@ class BannerDeleteModal(discord.ui.Modal, title="🗑️ 배너 채널 삭제"):
             
             role_msg = ""
             if target_user:
-                await self.cog.send_user_dm(target_user, f"관리자에 의해 배너 채널이 삭제되었습니다. (사유: {reason})", channel_name)
+                await self.cog.send_user_dm(target_user, f"관리자에 의해 배너 채널이 삭제되었습니다. (사유: {reason})", channel_name=channel_name)
                 
-                # --- [추가] 배너 역할 제거 ---
+                # --- [역할 회수] 배너 역할 제거 ---
                 role = guild.get_role(self.cog.banner_role_id)
                 if role and role in target_user.roles:
                     try:
@@ -336,7 +404,7 @@ class Banner(commands.Cog):
         self.log_channel_id = 1417208003027009636
         self.review_channel_id = 1500079277977112606
         self.exempt_channel_ids = [1520094510464499887]
-        self.banner_role_id = 1417209680559603953  # [추가] 배너 역할 ID
+        self.banner_role_id = 1417209680559603953
         self.category_ids = {
             1: 1541419838977745037, 
             2: 1493997022108319827, 
@@ -430,11 +498,12 @@ class Banner(commands.Cog):
                         return target
         return None
 
-    async def send_user_dm(self, member: discord.Member, reason: str, channel_name: str, original_content: str = ""):
+    async def send_user_dm(self, member: discord.Member, reason: str, channel: discord.TextChannel = None, channel_name: str = "", original_content: str = ""):
+        ch_name = channel.name if channel else channel_name
         try:
             embed = discord.Embed(
                 title="🚨 배너 홍보 규정 위반 안내",
-                description=f"**#{channel_name}** 채널 관련 안내사항입니다.",
+                description=f"**#{ch_name}** 채널 관련 안내사항입니다.",
                 color=discord.Color.orange(),
                 timestamp=discord.utils.utcnow()
             )
@@ -445,7 +514,15 @@ class Banner(commands.Cog):
             embed.set_footer(text="잘못 처리되었거나 수정이 필요한 경우 스태프에게 문의해 주세요.")
             await member.send(embed=embed)
         except discord.Forbidden:
-            pass
+            if channel:
+                try:
+                    await channel.send(
+                        content=f"🔔 {member.mention} (DM 수신이 차단되어 규정 위반 안내 메시지가 채널에 작성되었습니다.)",
+                        embed=embed,
+                        delete_after=10
+                    )
+                except Exception:
+                    pass
 
     async def send_penalty_log(self, reason: str, message: discord.Message, owner: discord.Member = None):
         log_channel = self.bot.get_channel(self.log_channel_id)
@@ -545,7 +622,7 @@ class Banner(commands.Cog):
             reason = f"타인 배너 채널 작성 시도 (채널 소유자: {owner.display_name})"
             await message.delete()
             await message.channel.send(f"⚠️ {message.author.mention} 타인의 배너 채널에는 글을 작성할 수 없습니다.", delete_after=5)
-            await self.send_user_dm(message.author, "본인의 배너 채널에만 홍보글을 작성하실 수 있습니다.", message.channel.name, message.content)
+            await self.send_user_dm(message.author, "본인의 배너 채널에만 홍보글을 작성하실 수 있습니다.", channel=message.channel, original_content=message.content)
             await self.send_penalty_log(reason, message, owner)
             return
 
@@ -561,7 +638,7 @@ class Banner(commands.Cog):
             reason = "배너 활동 금지 시간 활동 (00:31~08:29)"
             await message.delete()
             await message.channel.send(f"⚠️ {message.author.mention} 현재는 배너 활동 금지 시간입니다.", delete_after=5)
-            await self.send_user_dm(owner, "활동 금지 시간대(00:31~08:29)에 메시지가 작성되었습니다.", message.channel.name, message.content)
+            await self.send_user_dm(owner, "활동 금지 시간대(00:31~08:29)에 메시지가 작성되었습니다.", channel=message.channel, original_content=message.content)
             await self.send_penalty_log(reason, message, owner)
             return
 
@@ -569,7 +646,7 @@ class Banner(commands.Cog):
             reason = "답장(끌올) 기능을 이용한 꼼수 활동"
             await message.delete()
             await message.channel.send(f"⚠️ {message.author.mention} 답장(끌올) 기능은 금지되어 있습니다.", delete_after=5)
-            await self.send_user_dm(owner, "기존 메시지에 답장하여 끌어올리는 행위는 금지되어 있습니다.", message.channel.name, message.content)
+            await self.send_user_dm(owner, "기존 메시지에 답장하여 끌어올리는 행위는 금지되어 있습니다.", channel=message.channel, original_content=message.content)
             await self.send_penalty_log(reason, message, owner)
             return
 
@@ -605,7 +682,7 @@ class Banner(commands.Cog):
             reason = f"하루 1회 작성 제한 초과 (삭제 후 재작성 꼼수 시도 포함)"
             await message.delete()
             await message.channel.send(f"⚠️ {message.author.mention} 해당 배너 채널은 오늘 이미 작성 완료된 채널입니다. (글을 지워도 당일 재작성은 불가능합니다.)", delete_after=5)
-            await self.send_user_dm(owner, "배너 채널에는 하루에 1번만 작성하실 수 있습니다. (기존 글을 삭제하셔도 당일 재작성은 불가능합니다.)", message.channel.name, message.content)
+            await self.send_user_dm(owner, "배너 채널에는 하루에 1번만 작성하실 수 있습니다. (기존 글을 삭제하셔도 당일 재작성은 불가능합니다.)", channel=message.channel, original_content=message.content)
             await self.send_penalty_log(reason, message, owner)
             return
 
@@ -632,7 +709,7 @@ class Banner(commands.Cog):
             title="🖼️ 배너 채널 관리 패널",
             description=(
                 "스태프 전용 배너 컨트롤 도구입니다.\n\n"
-                "• **➕ 배너 생성**: 유저, 카테고리(1~4), 채널명을 입력하여 전용 배너 채널을 생성하고 역할을 지급합니다.\n"
+                "• **➕ 배너 생성**: 유저, 카테고리(1~4), 채널명을 입력하여 전용 배너 채널을 생성하고 역할 및 이용 규칙 DM을 전송합니다.\n"
                 "• **🗑️ 배너 삭제**: 유저, 채널 ID, 삭제 사유를 입력하여 배너 채널을 삭제하고 역할을 회수합니다.\n"
                 "• **🔄 제한 초기화**: 특정 유저의 하루 작성 제한 및 검토 대기 상태를 리셋합니다.\n"
                 "• **📢 전체 공지**: 등록된 모든 배너 채널에 일괄 안내 메시지를 전송합니다."
