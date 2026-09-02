@@ -130,7 +130,22 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 overwrites=overwrites,
                 topic=f"owner_id:{target_user.id}"
             )
-            await interaction.response.send_message(f"✅ {target_user.mention}님의 배너 채널({channel.mention})이 성공적으로 생성되었습니다!", ephemeral=True)
+
+            # --- [추가] 배너 역할 부여 ---
+            role = guild.get_role(self.cog.banner_role_id)
+            role_msg = ""
+            if role:
+                try:
+                    await target_user.add_roles(role, reason="배너 채널 생성에 따른 역할 지급")
+                    role_msg = f"\n🎗️ **{role.name}** 역할이 지급되었습니다."
+                except Exception as e:
+                    print(f"[배너] 역할 지급 실패: {e}")
+                    role_msg = "\n⚠️ 역할 지급 권한이 부족하여 역할을 부여하지 못했습니다."
+
+            await interaction.response.send_message(
+                f"✅ {target_user.mention}님의 배너 채널({channel.mention})이 성공적으로 생성되었습니다!{role_msg}",
+                ephemeral=True
+            )
         except Exception as e:
             await interaction.response.send_message(f"❌ 채널 생성 실패: `{e}`", ephemeral=True)
 
@@ -176,10 +191,25 @@ class BannerDeleteModal(discord.ui.Modal, title="🗑️ 배너 채널 삭제"):
 
         try:
             await channel.delete(reason=f"배너 삭제 (스태프: {interaction.user.name}) - 사유: {reason}")
+            
+            role_msg = ""
             if target_user:
                 await self.cog.send_user_dm(target_user, f"관리자에 의해 배너 채널이 삭제되었습니다. (사유: {reason})", channel_name)
+                
+                # --- [추가] 배너 역할 제거 ---
+                role = guild.get_role(self.cog.banner_role_id)
+                if role and role in target_user.roles:
+                    try:
+                        await target_user.remove_roles(role, reason=f"배너 채널 삭제 (사유: {reason})")
+                        role_msg = f"\n🎗️ **{role.name}** 역할이 회수되었습니다."
+                    except Exception as e:
+                        print(f"[배너] 역할 회수 실패: {e}")
+                        role_msg = "\n⚠️ 역할 회수 권한이 부족하여 역할을 제거하지 못했습니다."
 
-            await interaction.response.send_message(f"✅ `{channel_name}` 채널이 성공적으로 삭제되었습니다.", ephemeral=True)
+            await interaction.response.send_message(
+                f"✅ `{channel_name}` 채널이 성공적으로 삭제되었습니다.{role_msg}", 
+                ephemeral=True
+            )
         except Exception as e:
             await interaction.response.send_message(f"❌ 채널 삭제 실패: `{e}`", ephemeral=True)
 
@@ -240,7 +270,6 @@ class BannerNoticeModal(discord.ui.Modal, title="📢 배너 이용자 전체 �
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 메시지 전송 시간이 걸릴 수 있으므로 응답 대기
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
@@ -265,7 +294,7 @@ class BannerNoticeModal(discord.ui.Modal, title="📢 배너 이용자 전체 �
                     mention_text = owner.mention if owner else ""
                     await channel.send(content=mention_text, embed=embed)
                     success_count += 1
-                    await asyncio.sleep(0.3)  # API Rate Limit 방지
+                    await asyncio.sleep(0.3)
                 except Exception:
                     fail_count += 1
 
@@ -307,6 +336,7 @@ class Banner(commands.Cog):
         self.log_channel_id = 1417208003027009636
         self.review_channel_id = 1500079277977112606
         self.exempt_channel_ids = [1520094510464499887]
+        self.banner_role_id = 1417209680559603953  # [추가] 배너 역할 ID
         self.category_ids = {
             1: 1541419838977745037, 
             2: 1493997022108319827, 
@@ -602,8 +632,8 @@ class Banner(commands.Cog):
             title="🖼️ 배너 채널 관리 패널",
             description=(
                 "스태프 전용 배너 컨트롤 도구입니다.\n\n"
-                "• **➕ 배너 생성**: 유저, 카테고리(1~4), 채널명을 입력하여 전용 배너 채널을 생성합니다.\n"
-                "• **🗑️ 배너 삭제**: 유저, 채널 ID, 삭제 사유를 입력하여 배너 채널을 삭제합니다.\n"
+                "• **➕ 배너 생성**: 유저, 카테고리(1~4), 채널명을 입력하여 전용 배너 채널을 생성하고 역할을 지급합니다.\n"
+                "• **🗑️ 배너 삭제**: 유저, 채널 ID, 삭제 사유를 입력하여 배너 채널을 삭제하고 역할을 회수합니다.\n"
                 "• **🔄 제한 초기화**: 특정 유저의 하루 작성 제한 및 검토 대기 상태를 리셋합니다.\n"
                 "• **📢 전체 공지**: 등록된 모든 배너 채널에 일괄 안내 메시지를 전송합니다."
             ),
