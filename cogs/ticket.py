@@ -40,13 +40,41 @@ class TicketCreateView(discord.ui.View):
         category = guild.get_channel(self.cog.ticket_category_id)
         staff_role = guild.get_role(self.cog.staff_role_id)
 
+        # 🔒 [완벽 1:1 권한 세팅]
+        # 1. 기본 @everyone 차단
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, embed_links=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
+            guild.default_role: discord.PermissionOverwrite(view_channel=False)
         }
+
+        # 2. 카테고리에 상속된 다른 역할들(유저/시민 역할 등)이 있다면 전부 차단으로 덮어씌우기
+        if category:
+            for target in category.overwrites.keys():
+                overwrites[target] = discord.PermissionOverwrite(view_channel=False)
+
+        # 3. 오직 티켓 신청자 본인만 열람/작성 허용
+        overwrites[user] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            attach_files=True,
+            embed_links=True,
+            read_message_history=True
+        )
+
+        # 4. 봇 자신 권한 허용
+        overwrites[guild.me] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            manage_channels=True,
+            read_message_history=True
+        )
+
+        # 5. 지정된 스태프 역할만 열람/작성 허용
         if staff_role:
-            overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            overwrites[staff_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
 
         try:
             ticket_channel = await guild.create_text_channel(
@@ -86,7 +114,6 @@ class TicketCreateView(discord.ui.View):
 class Ticket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # 📌 수정된 카테고리 ID 적용
         self.ticket_category_id = 1490073085016014848
         self.staff_role_id = 1417209680559603953
 
