@@ -40,18 +40,13 @@ class TicketCreateView(discord.ui.View):
         category = guild.get_channel(self.cog.ticket_category_id)
         staff_role = guild.get_role(self.cog.staff_role_id)
 
-        # 🔒 [완벽 1:1 권한 세팅]
-        # 1. 기본 @everyone 차단
+        # 🔒 [완벽한 1:1 전용 권한 설정]
+        # 외부/타 역할 권한 상속 전면 차단
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False)
         }
 
-        # 2. 카테고리에 상속된 다른 역할들(유저/시민 역할 등)이 있다면 전부 차단으로 덮어씌우기
-        if category:
-            for target in category.overwrites.keys():
-                overwrites[target] = discord.PermissionOverwrite(view_channel=False)
-
-        # 3. 오직 티켓 신청자 본인만 열람/작성 허용
+        # 1. 신청자 본인만 열람/작성 허용
         overwrites[user] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -60,7 +55,7 @@ class TicketCreateView(discord.ui.View):
             read_message_history=True
         )
 
-        # 4. 봇 자신 권한 허용
+        # 2. 봇 권한 허용
         overwrites[guild.me] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -68,7 +63,7 @@ class TicketCreateView(discord.ui.View):
             read_message_history=True
         )
 
-        # 5. 지정된 스태프 역할만 열람/작성 허용
+        # 3. 지정된 스태프 역할만 열람/작성 허용
         if staff_role:
             overwrites[staff_role] = discord.PermissionOverwrite(
                 view_channel=True,
@@ -98,11 +93,13 @@ class TicketCreateView(discord.ui.View):
             )
             embed.set_footer(text=f"신청자 ID: {user.id}")
 
+            # 📢 @everyone 대신 스태프 역할만 멘션 알림
+            staff_mention = staff_role.mention if staff_role else "스태프"
             await ticket_channel.send(
-                content="@everyone 📩 새로운 문의 티켓이 개설되었습니다!",
+                content=f"{staff_mention} 📩 새로운 문의 티켓이 개설되었습니다!",
                 embed=embed,
                 view=TicketControlView(self.cog),
-                allowed_mentions=discord.AllowedMentions(everyone=True)
+                allowed_mentions=discord.AllowedMentions(roles=True, users=True)
             )
             await interaction.response.send_message(f"✅ 문의 티켓이 성공적으로 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
@@ -115,7 +112,7 @@ class Ticket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.ticket_category_id = 1490073085016014848
-        self.staff_role_id = 1417209680559603953
+        self.staff_role_id = 1417209680559603953  # 스태프 역할 ID
 
     async def cog_load(self):
         self.bot.add_view(TicketCreateView(self))
