@@ -1,8 +1,36 @@
+import io
 import asyncio
 import discord
 from discord.ext import commands
 
-# --- 1. 티켓 내부 제어 버튼 (티켓 닫기) ---
+# 📌 고객센터 대화 로그 채널 ID
+LOG_CHANNEL_ID = 1491268664564121773
+
+
+# --- 대화 내역을 .txt 파일로 생성하는 함수 ---
+async def create_ticket_transcript(channel: discord.TextChannel) -> discord.File:
+    lines = [
+        "============================================",
+        f"🎫 티켓 대화 기록: #{channel.name}",
+        f"📅 추출 시간: {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)",
+        "============================================\n"
+    ]
+
+    async for message in channel.history(limit=None, oldest_first=True):
+        time_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        content = message.content if message.content else "(텍스트 내용 없음)"
+        lines.append(f"[{time_str}] {message.author.display_name} ({message.author.id}): {content}")
+
+        if message.attachments:
+            for att in message.attachments:
+                lines.append(f"  └ [첨부파일] {att.url}")
+
+    text_data = "\n".join(lines)
+    bytes_io = io.BytesIO(text_data.encode("utf-8"))
+    return discord.File(bytes_io, filename=f"{channel.name}_대화기록.txt")
+
+
+# --- 1. 티켓 내부 제어 버튼 (티켓 닫기 및 로그 저장) ---
 class TicketControlView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
@@ -13,10 +41,41 @@ class TicketControlView(discord.ui.View):
         if not interaction.user.guild_permissions.manage_channels and not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("❌ 티켓은 스태프 또는 관리자만 닫을 수 있습니다.", ephemeral=True)
 
-        await interaction.response.send_message("🔒 5초 후 문의 티켓 채널이 삭제됩니다...")
+        await interaction.response.send_message("🔒 대화 내역 추출 및 로그 전송 중... 5초 후 채널이 삭제됩니다.")
+
+        # 대화 내역 .txt 파일 생성
+        transcript_file = await create_ticket_transcript(interaction.channel)
+
+        # 소유자 추적 (topic의 ticket_owner_id 추출)
+        owner_mention = "알 수 없음"
+        if interaction.channel.topic and "ticket_owner_id:" in interaction.channel.topic:
+            try:
+                owner_id = int(interaction.channel.topic.split("ticket_owner_id:")[1].split()[0])
+                owner_member = interaction.guild.get_member(owner_id)
+                owner_mention = owner_member.mention if owner_member else f"<@{owner_id}>"
+            except Exception:
+                pass
+
+        # 로그 채널로 .txt 전송
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="📄 [고객센터] 티켓 종료 대화 로그",
+                color=discord.Color.dark_gray(),
+                timestamp=discord.utils.utcnow()
+            )
+            embed.add_field(name="📌 채널명", value=f"`#{interaction.channel.name}`", inline=True)
+            embed.add_field(name="👤 티켓 신청자", value=owner_mention, inline=True)
+            embed.add_field(name="🛠️ 종료 스태프", value=interaction.user.mention, inline=True)
+
+            try:
+                await log_channel.send(embed=embed, file=transcript_file)
+            except Exception as e:
+                print(f"[티켓 로그 전송 실패] {e}")
+
         await asyncio.sleep(5)
         try:
-            await interaction.channel.delete(reason=f"티켓 종료 (종료 스태프: {interaction.user.name})")
+            await interaction.channel.delete(reason=f"티켓 종료 (스태프: {interaction.user.name})")
         except Exception as e:
             print(f"[티켓] 채널 삭제 에러: {e}")
 
@@ -40,13 +99,12 @@ class TicketCreateView(discord.ui.View):
         category = guild.get_channel(self.cog.ticket_category_id)
         staff_role = guild.get_role(self.cog.staff_role_id)
 
-        # 🔒 [완벽한 1:1 전용 권한 설정]
-        # 외부/타 역할 권한 상속 전면 차단
+        # 🔒 1:1 비밀 채널 전용 권한 설정 (다른 역할 전면 차단)
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False)
         }
 
-        # 1. 신청자 본인만 열람/작성 허용
+        # 1. 신청자 본인 권한
         overwrites[user] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -55,7 +113,7 @@ class TicketCreateView(discord.ui.View):
             read_message_history=True
         )
 
-        # 2. 봇 권한 허용
+        # 2. 봇 권한
         overwrites[guild.me] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -63,7 +121,7 @@ class TicketCreateView(discord.ui.View):
             read_message_history=True
         )
 
-        # 3. 지정된 스태프 역할만 열람/작성 허용
+        # 3. 스태프 역할 권한
         if staff_role:
             overwrites[staff_role] = discord.PermissionOverwrite(
                 view_channel=True,
@@ -93,7 +151,6 @@ class TicketCreateView(discord.ui.View):
             )
             embed.set_footer(text=f"신청자 ID: {user.id}")
 
-            # 📢 @everyone 대신 스태프 역할만 멘션 알림
             staff_mention = staff_role.mention if staff_role else "스태프"
             await ticket_channel.send(
                 content=f"{staff_mention} 📩 새로운 문의 티켓이 개설되었습니다!",
@@ -111,8 +168,9 @@ class TicketCreateView(discord.ui.View):
 class Ticket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # 📌 설정된 카테고리 ID & 스태프 역할 ID
         self.ticket_category_id = 1490073085016014848
-        self.staff_role_id = 1417209680559603953  # 스태프 역할 ID
+        self.staff_role_id = 1417209680559603953
 
     async def cog_load(self):
         self.bot.add_view(TicketCreateView(self))
