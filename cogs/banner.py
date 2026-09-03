@@ -23,21 +23,24 @@ class PromoReviewView(discord.ui.View):
         self.cog.save_daily_activity()
         self.cog.pending_review.pop(self.owner.id, None)
 
+        # ✅ 승인 즉시 채널 잠금 처리
+        await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "배너 홍보글 승인 완료로 인한 채널 잠금")
+
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.green()
-        embed.title = "✅ 배너 홍보글 승인 완료"
+        embed.title = "✅ 배너 홍보글 승인 완료 (채널 잠금 적용)"
         embed.set_footer(text=f"처리 스태프: {interaction.user.display_name} | 승인 일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
         for child in self.children:
             child.disabled = True
 
         await interaction.response.edit_message(embed=embed, view=self)
-        await interaction.followup.send(f"✅ {self.owner.mention}님의 배너 홍보글이 승인되었습니다.", ephemeral=True)
+        await interaction.followup.send(f"✅ {self.owner.mention}님의 배너 홍보글이 승인되었으며, 채널이 잠겼습니다.", ephemeral=True)
 
         try:
-            await self.owner.send(f"🎉 **#{self.target_message.channel.name}** 채널의 배너 홍보글이 스태프 검토를 통해 정상 승인되었습니다!")
+            await self.owner.send(f"🎉 **#{self.target_message.channel.name}** 채널의 배너 홍보글이 스태프 검토를 통해 정상 승인되었습니다! (오늘 추가 작성 불가)")
         except discord.Forbidden:
-            await self.target_message.channel.send(f"🎉 {self.owner.mention} 님의 배너 홍보글이 스태프 검토를 통해 정상 승인되었습니다!", delete_after=10)
+            await self.target_message.channel.send(f"🎉 {self.owner.mention} 님의 배너 홍보글이 정상 승인되었습니다! 🔒 채널이 잠겼습니다.", delete_after=10)
 
     @discord.ui.button(label="❌ 거절 (삭제)", style=discord.ButtonStyle.danger, custom_id="btn_promo_reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -115,15 +118,17 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
-        is_forbidden_time = (31 <= current_minute <= 509)
+        today_date = now.strftime("%Y-%m-%d")
 
-        # 권한 설정: @everyone 및 탑배너 등 기타 역할은 카테고리/기본 차단 상속
-        # 오직 배너 신청자 본인에게만 메시지 작성 및 첨부 권한 명시 부여
+        has_posted_today = (self.cog.daily_activity.get(str(target_user.id)) == today_date)
+        is_forbidden_time = (31 <= current_minute <= 509)
+        should_lock = is_forbidden_time or has_posted_today
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
             target_user: discord.PermissionOverwrite(
                 read_messages=True,
-                send_messages=not is_forbidden_time,
+                send_messages=not should_lock,
                 attach_files=True,
                 embed_links=True
             ),
@@ -138,7 +143,6 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 topic=f"owner_id:{target_user.id}"
             )
 
-            # --- [역할 지급] 배너 역할 부여 ---
             role = guild.get_role(self.cog.banner_role_id)
             role_msg = ""
             if role:
@@ -149,7 +153,6 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                     print(f"[배너] 역할 지급 실패: {e}")
                     role_msg = "\n⚠️ 역할 지급 권한이 부족하여 역할을 부여하지 못했습니다."
 
-            # --- [규정 Embed 작성] ---
             rules_embed = discord.Embed(
                 title="📜 [홍보나라] 배너 채널 생성 및 상세 이용 규정",
                 description=(
@@ -164,7 +167,7 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 name="1️⃣ 하루 1회 작성 원칙 (00:00 기준)",
                 value=(
                     "• 모든 배너 채널은 **1일 1회**만 홍보글 작성이 가능합니다.\n"
-                    "• **작성한 글을 삭제하더라도 당일 재작성 권한은 복구되지 않습니다.**\n"
+                    "• **글 전송 시 채널이 즉시 잠기며, 삭제하더라도 당일 재작성 권한은 복구되지 않습니다.**\n"
                     "• 답장(Reply) 및 끌올 기능을 활용한 편법 홍보는 경고 없이 삭제 및 제재 대상입니다."
                 ),
                 inline=False
@@ -181,7 +184,7 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 name="3️⃣ 홍보글 작성 양식 및 승인 기준",
                 value=(
                     "• **필수 구성**: 공백 제외 10자 이상의 설명 + (이미지/첨부파일 1개 이상 또는 초대/웹 링크)\n"
-                    "• **모바일 유저 안내**: 텍스트와 사진을 분할 등록할 경우, 사진 추가 작성 시 자동 연동 승인됩니다.\n"
+                    "• **모바일 유저 안내**: 텍스트와 사진을 분할 등록할 경우, 사진 추가 작성 시 자동 연동 승인되며 채널이 잠깁니다.\n"
                     "• **스태프 심사**: 규격 미달(짧은 글, 성의 없는 내용)은 검토 채널로 이관되어 승인 후 게시됩니다."
                 ),
                 inline=False
@@ -205,7 +208,6 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
             )
             rules_embed.set_footer(text="문의 및 이의신청은 스태프 문의 채널을 이용해 주세요.")
 
-            # --- [전송 처리] DM 전송 실패 시 생성된 채널에 직접 게시 ---
             dm_msg = ""
             try:
                 await target_user.send(embed=rules_embed)
@@ -271,7 +273,6 @@ class BannerDeleteModal(discord.ui.Modal, title="🗑️ 배너 채널 삭제"):
             if target_user:
                 await self.cog.send_user_dm(target_user, f"관리자에 의해 배너 채널이 삭제되었습니다. (사유: {reason})", channel_name=channel_name)
                 
-                # --- [역할 회수] 배너 역할 제거 ---
                 role = guild.get_role(self.cog.banner_role_id)
                 if role and role in target_user.roles:
                     try:
@@ -321,7 +322,9 @@ class BannerResetModal(discord.ui.Modal, title="🔄 배너 제한/검토 초기
             cleared = True
 
         if cleared:
-            await interaction.response.send_message(f"✅ {target_user.mention}님의 오늘 배너 작성 제한 및 검토 대기 상태가 초기화되었습니다.", ephemeral=True)
+            # ✅ 제한 초기화 시 즉시 채널 잠금 해제
+            await self.cog.unlock_channel_if_eligible(target_user, guild)
+            await interaction.response.send_message(f"✅ {target_user.mention}님의 오늘 배너 작성 제한 및 검토 대기 상태가 초기화되었으며, 채널 잠금이 해제되었습니다.", ephemeral=True)
         else:
             await interaction.response.send_message(f"ℹ️ {target_user.mention}님은 오늘 등록된 배너 작성/검토 기록이 없습니다.", ephemeral=True)
 
@@ -363,7 +366,7 @@ class BannerNoticeModal(discord.ui.Modal, title="📢 배너 이용자 전체 �
         fail_count = 0
 
         for channel in guild.text_channels:
-            if channel.category_id in self.cog.category_ids.values() and channel.name.startswith("⚡ㆍ"):
+            if channel.category_id in self.cog.category_ids.values() and channel.name.startswith("⚡"):
                 try:
                     owner = self.cog.get_channel_owner(channel)
                     mention_text = owner.mention if owner else ""
@@ -381,7 +384,6 @@ class BannerNoticeModal(discord.ui.Modal, title="📢 배너 이용자 전체 �
         )
 
 
-# --- 3. 배너 관리 패널 버튼 뷰 ---
 class BannerPanelView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
@@ -404,7 +406,7 @@ class BannerPanelView(discord.ui.View):
         await interaction.response.send_modal(BannerNoticeModal(self.cog))
 
 
-# --- 4. 메인 Cog 클래스 ---
+# --- 3. 메인 Cog 클래스 ---
 class Banner(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -412,6 +414,7 @@ class Banner(commands.Cog):
         self.review_channel_id = 1500079277977112606
         self.exempt_channel_ids = [1520094510464499887]
         self.banner_role_id = 1417209680559603953
+
         self.category_ids = {
             1: 1541419838977745037, 
             2: 1493997022108319827, 
@@ -430,43 +433,88 @@ class Banner(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(BannerPanelView(self))
 
-    # --- [실제 디스코드 채널 권한 대조 기반 권한 동기화 함수] ---
+    # --- [채널 즉시 잠금 / 해제 헬퍼 함수] ---
+    async def lock_channel_for_owner(self, channel: discord.TextChannel, owner: discord.Member, reason: str = "배너 채널 잠금"):
+        try:
+            overwrite = channel.overwrites_for(owner)
+            overwrite.send_messages = False
+            await channel.set_permissions(owner, overwrite=overwrite, reason=reason)
+        except Exception as e:
+            print(f"[배너] 채널 잠금 실패 ({channel.name}): {e}")
+
+    async def unlock_channel_if_eligible(self, owner: discord.Member, guild: discord.Guild):
+        kst = timezone(timedelta(hours=9))
+        now = datetime.now(kst)
+        current_minute = now.hour * 60 + now.minute
+        if 31 <= current_minute <= 509:
+            return  # 현재 활동 금지 시간이면 해제하지 않음
+
+        for channel in guild.text_channels:
+            if channel.category_id in self.category_ids.values() and channel.name.startswith("⚡"):
+                ch_owner = self.get_channel_owner(channel)
+                if ch_owner and ch_owner.id == owner.id:
+                    try:
+                        overwrite = channel.overwrites_for(owner)
+                        overwrite.send_messages = True
+                        await channel.set_permissions(owner, overwrite=overwrite, reason="제한 초기화로 인한 채널 잠금 해제")
+                    except Exception as e:
+                        print(f"[배너] 채널 잠금 해제 실패 ({channel.name}): {e}")
+
+    # --- [소유자 추적 및 자동 권한 동기화] ---
+    def get_channel_owner(self, channel: discord.TextChannel) -> discord.Member:
+        if channel.topic and "owner_id:" in channel.topic:
+            try:
+                owner_id = int(channel.topic.split("owner_id:")[1].split()[0])
+                member = channel.guild.get_member(owner_id)
+                if member:
+                    return member
+            except (ValueError, IndexError):
+                pass
+
+        for target in channel.overwrites.keys():
+            if isinstance(target, discord.Member) and not target.bot:
+                if not target.guild_permissions.administrator and not target.guild_permissions.manage_channels:
+                    return target
+        return None
+
     async def sync_all_banner_permissions(self) -> tuple[int, int]:
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
+        today_date = now.strftime("%Y-%m-%d")
 
-        # 00:31 ~ 08:29 사이는 배너 잠금 시간
-        should_lock = (31 <= current_minute <= 509)
+        is_forbidden_time = (31 <= current_minute <= 509)
 
         synced_count = 0
         skipped_count = 0
 
         for guild in self.bot.guilds:
             for channel in guild.text_channels:
-                if channel.category_id in self.category_ids.values() and channel.name.startswith("⚡ㆍ"):
+                if channel.category_id in self.category_ids.values() and channel.name.startswith("⚡"):
                     owner = self.get_channel_owner(channel)
                     if not owner:
                         continue
 
+                    # ✅ 활동 금지 시간이거나 당일 이미 작성한 유저라면 잠금 처리
+                    has_posted_today = (self.daily_activity.get(str(owner.id)) == today_date)
+                    should_lock = is_forbidden_time or has_posted_today
+
                     overwrite = channel.overwrites_for(owner)
                     current_send_perm = overwrite.send_messages
 
-                    # 잠금 시간인데 권한이 꺼져있지 않거나 설정이 안 된 경우 -> 잠금
                     if should_lock and current_send_perm != False:
                         overwrite.send_messages = False
                         try:
-                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 시간 동기화 (자동 잠금)")
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 동기화 (작성 완료/금지 시간 잠금)")
                             synced_count += 1
                             await asyncio.sleep(0.2)
                         except Exception as e:
                             print(f"[동기화 에러] {channel.name}: {e}")
 
-                    # 작성 가능 시간인데 권한이 켜져있지 않은 경우 -> 해제
                     elif not should_lock and current_send_perm != True:
                         overwrite.send_messages = True
                         try:
-                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 시간 동기화 (자동 해제)")
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 동기화 (작성 가능 해제)")
                             synced_count += 1
                             await asyncio.sleep(0.2)
                         except Exception as e:
@@ -476,7 +524,6 @@ class Banner(commands.Cog):
 
         return synced_count, skipped_count
 
-    # --- [1분 주기 태스크: 수동 변경 시에도 실제 채널 권한 대조하여 자동 교정] ---
     @tasks.loop(minutes=1)
     async def auto_lock_task(self):
         await self.bot.wait_until_ready()
@@ -498,23 +545,6 @@ class Banner(commands.Cog):
                 json.dump(self.daily_activity, f, ensure_ascii=False, indent=4)
         except Exception as e:
             print(f"[배너] 데이터 저장 실패: {e}")
-
-    def get_channel_owner(self, channel: discord.TextChannel) -> discord.Member:
-        if channel.topic and "owner_id:" in channel.topic:
-            try:
-                owner_id = int(channel.topic.split("owner_id:")[1].split()[0])
-                member = channel.guild.get_member(owner_id)
-                if member:
-                    return member
-            except (ValueError, IndexError):
-                pass
-
-        for target, overwrite in channel.overwrites.items():
-            if isinstance(target, discord.Member) and not target.bot:
-                if not target.guild_permissions.administrator and not target.guild_permissions.manage_messages:
-                    if overwrite.send_messages is True:
-                        return target
-        return None
 
     async def send_user_dm(self, member: discord.Member, reason: str, channel: discord.TextChannel = None, channel_name: str = "", original_content: str = ""):
         ch_name = channel.name if channel else channel_name
@@ -609,7 +639,7 @@ class Banner(commands.Cog):
         if message.author.guild_permissions.administrator:
             return
 
-        if message.channel.category_id not in self.category_ids.values() or not message.channel.name.startswith("⚡ㆍ"):
+        if message.channel.category_id not in self.category_ids.values() or not message.channel.name.startswith("⚡"):
             return
 
         owner = self.get_channel_owner(message.channel) or message.author
@@ -618,7 +648,7 @@ class Banner(commands.Cog):
             del self.pending_review[owner.id]
             await self.send_penalty_log("⚠️ 검토 대기 중 홍보글 유저 직접 삭제 감지 (검토 취소됨)", message, owner)
         else:
-            await self.send_penalty_log("🗑️ 작성 완료된 홍보글 유저 삭제 감지 (1회 제한은 유지됨)", message, owner)
+            await self.send_penalty_log("🗑️ 작성 완료된 홍보글 유저 삭제 감지 (1회 제한 및 잠금 유지)", message, owner)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -628,7 +658,7 @@ class Banner(commands.Cog):
         if message.channel.id in self.exempt_channel_ids:
             return
 
-        if message.channel.category_id not in self.category_ids.values() or not message.channel.name.startswith("⚡ㆍ"):
+        if message.channel.category_id not in self.category_ids.values() or not message.channel.name.startswith("⚡"):
             return
 
         if message.author.guild_permissions.administrator:
@@ -668,6 +698,7 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
+        # 모바일 연속 작성 승인 검토 중일 때
         if owner.id in self.pending_review:
             prev_msg_id = self.pending_review[owner.id]
             prev_msg = None
@@ -686,7 +717,10 @@ class Banner(commands.Cog):
                 del self.pending_review[owner.id]
                 self.daily_activity[str(owner.id)] = today_date
                 self.save_daily_activity()
-                await message.channel.send(f"✅ {message.author.mention} 글과 사진이 연속으로 감지되어 오늘 홍보글이 정상 등록되었습니다! (모바일 분할 작성 자동 승인)", delete_after=5)
+                
+                # ✅ 분할 작성 승인 즉시 채널 잠금
+                await self.lock_channel_for_owner(message.channel, owner, "오늘 배너 홍보글 작성 완료로 인한 채널 잠금")
+                await message.channel.send(f"✅ {message.author.mention} 글과 사진이 연속으로 감지되어 오늘 홍보글이 정상 등록되었습니다! 🔒 채널이 잠겼습니다.", delete_after=10)
                 return
 
             reason = "검토 대기 중 홍보글 중복 작성 시도"
@@ -709,14 +743,20 @@ class Banner(commands.Cog):
         content_clean = message.content.replace("@everyone", "").replace("@here", "").strip()
         has_long_text = len(content_clean) >= 10
 
+        # 정상 홍보글 전송 성공시
         if has_long_text and (has_attachment or has_link):
             self.daily_activity[owner_id_str] = today_date
             self.save_daily_activity()
+            
+            # ✅ 홍보글 전송 즉시 채널 잠금
+            await self.lock_channel_for_owner(message.channel, owner, "오늘 배너 홍보글 작성 완료로 인한 채널 잠금")
+            await message.channel.send(f"🔒 {message.author.mention} 오늘 배너 홍보글 작성이 완료되어 채널이 잠겼습니다. (내일 00:00에 자동 해제)", delete_after=10)
             return
 
+        # 자격 미달시 스태프 검토 요청
         self.pending_review[owner.id] = message.id
         await self.send_to_review_channel(message, owner, today_date)
-        await message.channel.send(f"ℹ️ {message.author.mention} 작성하신 글은 검토 대기 상태입니다. (모바일 유저의 경우 지금 바로 사진을 추가로 올리시면 자동 승인됩니다!)", delete_after=5)
+        await message.channel.send(f"ℹ️ {message.author.mention} 작성하신 글은 검토 대기 상태입니다. (모바일 유저의 경우 지금 바로 사진을 추가로 올리시면 자동 승인 후 잠금 처리됩니다!)", delete_after=5)
 
     @commands.command(name="배너패널", aliases=["배너"])
     async def setup_banner_panel(self, ctx):
@@ -729,7 +769,7 @@ class Banner(commands.Cog):
                 "스태프 전용 배너 컨트롤 도구입니다.\n\n"
                 "• **➕ 배너 생성**: 유저, 카테고리(1~4), 채널명을 입력하여 전용 배너 채널을 생성하고 역할 및 이용 규칙 DM을 전송합니다.\n"
                 "• **🗑️ 배너 삭제**: 유저, 채널 ID, 삭제 사유를 입력하여 배너 채널을 삭제하고 역할을 회수합니다.\n"
-                "• **🔄 제한 초기화**: 특정 유저의 하루 작성 제한 및 검토 대기 상태를 리셋합니다.\n"
+                "• **🔄 제한 초기화**: 특정 유저의 하루 작성 제한 및 검토 대기 상태를 리셋하고 채널 잠금을 해제합니다.\n"
                 "• **📢 전체 공지**: 등록된 모든 배너 채널에 일괄 안내 메시지를 전송합니다."
             ),
             color=discord.Color.dark_embed()
@@ -741,7 +781,7 @@ class Banner(commands.Cog):
         if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_channels:
             return await ctx.send("❌ 이 명령어를 실행하려면 관리자 권한이 필요합니다.")
 
-        msg = await ctx.send("🔄 현재 시간 기준으로 모든 배너 채널 권한을 동기화 중입니다...")
+        msg = await ctx.send("🔄 현재 시간 및 작성 기록 기준으로 모든 배너 채널 권한을 동기화 중입니다...")
         synced, skipped = await self.sync_all_banner_permissions()
 
         kst = timezone(timedelta(hours=9))
@@ -750,7 +790,7 @@ class Banner(commands.Cog):
         await msg.edit(
             content=(
                 f"✅ **배너 채널 권한 동기화 완료** (현재 시간: `{now_str}`)\n"
-                f"• 수정/동기화된 채널: `{synced}`개\n"
+                f"• 수정/잠금/해제된 채널: `{synced}`개\n"
                 f"• 이미 정상인 채널: `{skipped}`개"
             )
         )
