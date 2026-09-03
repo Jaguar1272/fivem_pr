@@ -195,8 +195,8 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
             try:
                 await target_user.send(embed=rules_embed)
             except discord.Forbidden:
-                await channel.content = f"🔔 {target_user.mention} 님, DM 차단되어 규정 안내를 채널에 게시합니다."
-                await channel.send(content=channel.content, embed=rules_embed)
+                content_msg = f"🔔 {target_user.mention} 님, DM 차단되어 규정 안내를 채널에 게시합니다."
+                await channel.send(content=content_msg, embed=rules_embed)
 
             await interaction.response.send_message(f"✅ {target_user.mention}님의 배너 채널({channel.mention}) 생성 완료!{role_msg}", ephemeral=True)
         except Exception as e:
