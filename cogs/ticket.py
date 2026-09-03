@@ -43,10 +43,8 @@ class TicketControlView(discord.ui.View):
 
         await interaction.response.send_message("🔒 대화 내역 추출 및 로그 전송 중... 5초 후 채널이 삭제됩니다.")
 
-        # 대화 내역 .txt 파일 생성
         transcript_file = await create_ticket_transcript(interaction.channel)
 
-        # 소유자 추적 (topic의 ticket_owner_id 추출)
         owner_mention = "알 수 없음"
         if interaction.channel.topic and "ticket_owner_id:" in interaction.channel.topic:
             try:
@@ -56,7 +54,6 @@ class TicketControlView(discord.ui.View):
             except Exception:
                 pass
 
-        # 로그 채널로 .txt 전송
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             embed = discord.Embed(
@@ -97,14 +94,16 @@ class TicketCreateView(discord.ui.View):
             return await interaction.response.send_message(f"⚠️ 이미 생성된 문의 티켓이 있습니다: {existing_channel.mention}", ephemeral=True)
 
         category = guild.get_channel(self.cog.ticket_category_id)
-        staff_role = guild.get_role(self.cog.staff_role_id)
+        
+        # 🚨 스태프 역할 검증 로직 추가 (None일 경우 안전하게 무시)
+        staff_role = guild.get_role(self.cog.staff_role_id) if self.cog.staff_role_id else None
 
-        # 🔒 1:1 비밀 채널 전용 권한 설정 (다른 역할 전면 차단)
+        # 🔒 [1:1 전용 비밀 권한] 완벽 차단 로직
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False)
         }
 
-        # 1. 신청자 본인 권한
+        # 1. 티켓 신청자 본인만 허용
         overwrites[user] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -113,7 +112,7 @@ class TicketCreateView(discord.ui.View):
             read_message_history=True
         )
 
-        # 2. 봇 권한
+        # 2. 봇 자신 허용
         overwrites[guild.me] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -121,7 +120,7 @@ class TicketCreateView(discord.ui.View):
             read_message_history=True
         )
 
-        # 3. 스태프 역할 권한
+        # 3. 진짜 스태프 역할이 지정되어 있는 경우에만 허용 (현재는 None 처리로 비활성화됨)
         if staff_role:
             overwrites[staff_role] = discord.PermissionOverwrite(
                 view_channel=True,
@@ -151,9 +150,11 @@ class TicketCreateView(discord.ui.View):
             )
             embed.set_footer(text=f"신청자 ID: {user.id}")
 
-            staff_mention = staff_role.mention if staff_role else "스태프"
+            # 🚨 타 역할 노출 방지를 위한 멘션 제거 (순수 안내 메시지로만 출력)
+            mention_content = f"{staff_role.mention} 📩 새로운 문의 티켓이 개설되었습니다!" if staff_role else "📩 새로운 문의 티켓이 개설되었습니다!"
+
             await ticket_channel.send(
-                content=f"{staff_mention} 📩 새로운 문의 티켓이 개설되었습니다!",
+                content=mention_content,
                 embed=embed,
                 view=TicketControlView(self.cog),
                 allowed_mentions=discord.AllowedMentions(roles=True, users=True)
@@ -168,9 +169,11 @@ class TicketCreateView(discord.ui.View):
 class Ticket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # 📌 설정된 카테고리 ID & 스태프 역할 ID
         self.ticket_category_id = 1490073085016014848
-        self.staff_role_id = 1417209680559603953
+        
+        # 🚨 문제의 원인이었던 배너 역할 ID를 완전히 삭제하고 None으로 고정했습니다.
+        # 이제 티켓은 '신청자 본인'과 디스코드 '관리자' 권한을 가진 분들만 볼 수 있습니다.
+        self.staff_role_id = None  
 
     async def cog_load(self):
         self.bot.add_view(TicketCreateView(self))
