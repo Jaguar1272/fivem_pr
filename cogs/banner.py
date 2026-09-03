@@ -19,27 +19,44 @@ class PromoReviewView(discord.ui.View):
         if not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("❌ 스태프(메시지 관리 권한)만 처리할 수 있습니다.", ephemeral=True)
 
-        self.cog.daily_activity[str(self.owner.id)] = self.today_date
-        self.cog.save_daily_activity()
+        kst = timezone(timedelta(hours=9))
+        now_ts = datetime.now(kst).timestamp()
+        
+        # 승인 시 횟수 기록
+        self.cog.record_post(str(self.owner.id), self.today_date, now_ts)
         self.cog.pending_review.pop(self.owner.id, None)
 
-        await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "배너 홍보글 승인 완료로 인한 채널 잠금")
+        # 부스터 여부 체크 후 알맞게 채널 잠금
+        is_booster = any(role.id == self.cog.booster_role_id for role in self.owner.roles)
+        user_act = self.cog.get_user_activity(str(self.owner.id), self.today_date)
+        count = user_act["count"]
+
+        if is_booster:
+            if count >= 3:
+                await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "오늘 부스터 3회 작성 완료로 인한 채널 잠금")
+                status_msg = "🎉 승인 완료! 오늘 부스터 혜택(3회)을 모두 소진하여 채널이 내일까지 잠깁니다."
+            else:
+                await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "부스터 홍보글 승인 완료로 인한 3시간 채널 잠금")
+                status_msg = f"🎉 승인 완료! 3시간 쿨타임 동안 채널이 잠깁니다. (남은 횟수: {3 - count}회)"
+        else:
+            await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "배너 홍보글 승인 완료로 인한 채널 잠금")
+            status_msg = "🎉 승인 완료! 오늘 작성을 모두 마쳐 채널이 내일까지 잠겼습니다."
 
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.green()
         embed.title = "✅ 배너 홍보글 승인 완료 (채널 잠금 적용)"
-        embed.set_footer(text=f"처리 스태프: {interaction.user.display_name} | 승인 일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        embed.set_footer(text=f"처리 스태프: {interaction.user.display_name} | 승인 일시: {datetime.now(kst).strftime('%Y-%m-%d %H:%M')}")
 
         for child in self.children:
             child.disabled = True
 
         await interaction.response.edit_message(embed=embed, view=self)
-        await interaction.followup.send(f"✅ {self.owner.mention}님의 배너 홍보글이 승인되었으며, 채널이 잠겼습니다.", ephemeral=True)
+        await interaction.followup.send(f"✅ {self.owner.mention}님의 배너 홍보글이 승인되었으며, 권한 동기화가 적용되었습니다.", ephemeral=True)
 
         try:
-            await self.owner.send(f"🎉 **#{self.target_message.channel.name}** 채널의 배너 홍보글이 스태프 검토를 통해 정상 승인되었습니다!")
+            await self.owner.send(f"**#{self.target_message.channel.name}** 채널의 배너 홍보글이 정상 승인되었습니다!\n> {status_msg}")
         except discord.Forbidden:
-            await self.target_message.channel.send(f"🎉 {self.owner.mention} 님의 배너 홍보글이 정상 승인되었습니다! 🔒 채널이 잠겼습니다.", delete_after=10)
+            await self.target_message.channel.send(f"{self.owner.mention} 님, {status_msg}", delete_after=10)
 
     @discord.ui.button(label="❌ 거절 (삭제)", style=discord.ButtonStyle.danger, custom_id="btn_promo_reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -56,7 +73,7 @@ class PromoReviewView(discord.ui.View):
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.dark_grey()
         embed.title = "❌ 배너 홍보글 거절 및 삭제"
-        embed.set_footer(text=f"처리 스태프: {interaction.user.display_name} | 거절 일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        embed.set_footer(text=f"처리 스태프: {interaction.user.display_name} | 거절 일시: {datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M')}")
 
         for child in self.children:
             child.disabled = True
@@ -70,7 +87,7 @@ class PromoReviewView(discord.ui.View):
             await self.target_message.channel.send(f"⚠️ {self.owner.mention} 님의 홍보글이 스태프 검토 결과 규정 미달로 삭제되었습니다.", delete_after=10)
 
 
-# --- 2. 패널 전용 모달 (생성/삭제/이름변경/초기화/공지) ---
+# --- 2. 패널 전용 모달 ---
 class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
     def __init__(self, cog):
         super().__init__()
@@ -118,10 +135,20 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
         today_date = now.strftime("%Y-%m-%d")
+        now_ts = now.timestamp()
 
-        has_posted_today = (self.cog.daily_activity.get(str(target_user.id)) == today_date)
-        is_forbidden_time = (31 <= current_minute <= 509)
-        should_lock = is_forbidden_time or has_posted_today
+        # 부스터 유무에 따른 생성 즉시 잠금 조건 판단
+        is_booster = any(role.id == self.cog.booster_role_id for role in target_user.roles)
+        user_act = self.cog.get_user_activity(str(target_user.id), today_date)
+        count = user_act["count"]
+        last_ts = user_act["last_timestamp"]
+
+        if is_booster:
+            is_cooldown = (count > 0 and count < 3 and (now_ts - last_ts) < 10800)
+            should_lock = (count >= 3) or is_cooldown
+        else:
+            is_forbidden_time = (31 <= current_minute <= 509)
+            should_lock = is_forbidden_time or (count >= 1)
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
@@ -148,8 +175,7 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 try:
                     await target_user.add_roles(role, reason="배너 채널 생성에 따른 역할 지급")
                     role_msg = f"\n🎗️ **{role.name}** 역할이 지급되었습니다."
-                except Exception as e:
-                    print(f"[배너] 역할 지급 실패: {e}")
+                except Exception:
                     role_msg = "\n⚠️ 역할 지급 권한이 부족하여 역할을 부여하지 못했습니다."
 
             cs_mention = f"<#{self.cog.cs_channel_id}>"
@@ -158,35 +184,34 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 title="📜 [홍보나라] 배너 채널 생성 및 상세 이용 규정",
                 description=(
                     f"안녕하세요, **{target_user.display_name}**님!\n"
-                    f"요청하신 배너 채널 **{channel.mention}** 이(가) 성공적으로 개설되었습니다.\n\n"
-                    f"⚠️ **아래 규정을 숙지하지 않아 발생한 불이익(메시지 삭제, 채널 폐쇄, 역할 회수)은 본인에게 책임이 있습니다.**"
+                    f"요청하신 배너 채널 **{channel.mention}** 이(가) 개설되었습니다.\n"
+                    f"⚠️ **아래 규정을 숙지하지 않아 발생한 불이익은 본인에게 책임이 있습니다.**"
                 ),
                 color=discord.Color.blue(),
                 timestamp=discord.utils.utcnow()
             )
             rules_embed.add_field(
-                name="1️⃣ 하루 1회 작성 원칙 (00:00 기준)",
+                name="1️⃣ 하루 1회 작성 원칙 및 자동 잠금",
                 value=(
-                    "• 모든 배너 채널은 **1일 1회**만 홍보글 작성이 가능합니다.\n"
-                    "• **글 전송 시 채널이 즉시 잠기며, 삭제하더라도 당일 재작성 권한은 복구되지 않습니다.**\n"
-                    "• 답장(Reply) 및 끌올 기능을 활용한 편법 홍보는 경고 없이 삭제 및 제재 대상입니다."
+                    "• 기본 유저는 **1일 1회** 홍보글 작성이 가능하며 전송 시 즉시 잠깁니다.\n"
+                    "• **매일 00:31 ~ 08:29**는 기본 활동 금지 시간으로 권한이 자동 차단됩니다."
                 ),
                 inline=False
             )
             rules_embed.add_field(
-                name="2️⃣ 활동 금지 시간 준수 (자동 잠금)",
+                name="🚀 서버 부스트(후원자) 특별 혜택",
                 value=(
-                    "• **매일 00:31 ~ 08:29**는 서버 배너 활동 금지 시간입니다.\n"
-                    "• 해당 시간대에는 채널 쓰기 권한이 자동 차단되며, 우회 작성 시 즉시 삭제 처리됩니다."
+                    "• **활동 금지 시간 면제**: 00:31~08:29 시간대에도 무제한 작성 가능\n"
+                    "• **하루 최대 3회 작성**: 작성 쿨타임(3시간) 경과 후 하루 3번 홍보 가능\n"
+                    "• **@everyone 멘션 허용**: 홍보 내용(사진/글)과 함께 작성 시 멘션 사용 가능"
                 ),
                 inline=False
             )
             rules_embed.add_field(
-                name="3️⃣ 홍보글 작성 양식 및 승인 기준",
+                name="3️⃣ 홍보글 작성 양식",
                 value=(
-                    "• **필수 구성**: 공백 제외 10자 이상의 설명 + (이미지/첨부파일 1개 이상 또는 초대/웹 링크)\n"
-                    "• **모바일 유저 안내**: 텍스트와 사진을 분할 등록할 경우, 사진 추가 작성 시 자동 연동 승인되며 채널이 잠깁니다.\n"
-                    "• **스태프 심사**: 규격 미달(짧은 글, 성의 없는 내용)은 검토 채널로 이관되어 승인 후 게시됩니다."
+                    "• **필수**: 공백 제외 10자 이상의 설명 + (이미지/첨부파일 또는 웹 링크)\n"
+                    "• 규격 미달 시 스태프 검토 채널로 이관되며 심사 후 게시됩니다."
                 ),
                 inline=False
             )
@@ -195,15 +220,7 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 value=(
                     "• **디엠 문의 절대 금지**: 스태프/관리자 개인 DM으로 문의 시 **경고 조치**됩니다.\n"
                     f"• **공식 문의처**: 모든 문의 및 이의신청은 **{cs_mention}** 채널 또는 티켓 문의를 이용하세요.\n"
-                    "• **채널 침범 금지**: 본인 소유 채널 외 타인의 배너 채널에 메시지 작성 절대 불가"
-                ),
-                inline=False
-            )
-            rules_embed.add_field(
-                name="5️⃣ 위반 시 제재 및 채널 삭제 기준",
-                value=(
-                    "• 규정 위반 적발 시 사전 통보 없이 홍보글 삭제 및 **배너 채널 즉시 삭제**\n"
-                    "• 배너 권한 역할(`🎗️`) 회수 및 위반 누적 시 서버 홍보 자격 영구 박탈"
+                    "• 답장(끌올) 및 타인 채널 침범은 적발 시 채널 즉시 폐쇄 사유가 됩니다."
                 ),
                 inline=False
             )
@@ -215,20 +232,19 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 dm_msg = "\n📩 유저에게 상세 배너 이용 규정 DM이 전송되었습니다."
             except discord.Forbidden:
                 await channel.send(
-                    content=f"🔔 {target_user.mention} 님, DM 수신이 차단되어 있어 해당 채널에 배너 이용 규정을 게시합니다.",
+                    content=f"🔔 {target_user.mention} 님, DM 수신이 차단되어 채널에 배너 이용 규정을 게시합니다.",
                     embed=rules_embed
                 )
-                dm_msg = "\n⚠️ 유저의 DM이 차단되어 생성된 배너 채널에 직접 규정을 전송했습니다."
+                dm_msg = "\n⚠️ DM이 차단되어 생성된 채널에 직접 규정을 전송했습니다."
 
             await interaction.response.send_message(
-                f"✅ {target_user.mention}님의 배너 채널({channel.mention})이 성공적으로 생성되었습니다!{role_msg}{dm_msg}",
+                f"✅ {target_user.mention}님의 배너 채널({channel.mention}) 생성 완료!{role_msg}{dm_msg}",
                 ephemeral=True
             )
         except Exception as e:
             await interaction.response.send_message(f"❌ 채널 생성 실패: `{e}`", ephemeral=True)
 
 
-# ✨ 새로 추가된 배너 채널 이름 변경 Modal
 class BannerRenameModal(discord.ui.Modal, title="✏️ 배너 채널 이름 변경"):
     def __init__(self, cog):
         super().__init__()
@@ -263,7 +279,7 @@ class BannerRenameModal(discord.ui.Modal, title="✏️ 배너 채널 이름 변
         try:
             await channel.edit(name=new_name, reason=f"스태프 이름 변경 요청: {interaction.user.name}")
             await interaction.response.send_message(
-                f"✅ 배너 채널 이름이 성공적으로 변경되었습니다!\n• 기존: `{old_name}`\n• 변경: {channel.mention}",
+                f"✅ 배너 채널 이름 변경 완료!\n• 기존: `{old_name}`\n• 변경: {channel.mention}",
                 ephemeral=True
             )
         except Exception as e:
@@ -321,12 +337,11 @@ class BannerDeleteModal(discord.ui.Modal, title="🗑️ 배너 채널 삭제"):
                     try:
                         await target_user.remove_roles(role, reason=f"배너 채널 삭제 (사유: {reason})")
                         role_msg = f"\n🎗️ **{role.name}** 역할이 회수되었습니다."
-                    except Exception as e:
-                        print(f"[배너] 역할 회수 실패: {e}")
-                        role_msg = "\n⚠️ 역할 회수 권한이 부족하여 역할을 제거하지 못했습니다."
+                    except Exception:
+                        role_msg = "\n⚠️ 역할 회수 권한 부족."
 
             await interaction.response.send_message(
-                f"✅ `{channel_name}` 채널이 성공적으로 삭제되었습니다.{role_msg}", 
+                f"✅ `{channel_name}` 채널 삭제 완료!{role_msg}", 
                 ephemeral=True
             )
         except Exception as e:
@@ -366,9 +381,9 @@ class BannerResetModal(discord.ui.Modal, title="🔄 배너 제한/검토 초기
 
         if cleared:
             await self.cog.unlock_channel_if_eligible(target_user, guild)
-            await interaction.response.send_message(f"✅ {target_user.mention}님의 오늘 배너 작성 제한 및 검토 대기 상태가 초기화되었으며, 채널 잠금이 해제되었습니다.", ephemeral=True)
+            await interaction.response.send_message(f"✅ {target_user.mention}님의 오늘 배너 작성 기록이 완전히 초기화되었습니다.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"ℹ️ {target_user.mention}님은 오늘 등록된 배너 작성/검토 기록이 없습니다.", ephemeral=True)
+            await interaction.response.send_message(f"ℹ️ {target_user.mention}님은 오늘 등록된 배너 기록이 없습니다.", ephemeral=True)
 
 
 class BannerNoticeModal(discord.ui.Modal, title="📢 배너 이용자 전체 공지"):
@@ -459,8 +474,12 @@ class Banner(commands.Cog):
         self.log_channel_id = 1417208003027009636
         self.review_channel_id = 1500079277977112606
         self.exempt_channel_ids = [1520094510464499887]
+        
         self.banner_role_id = 1417209680559603953
         self.cs_channel_id = 1417202550016311449
+        
+        # 💎 서버 부스터(후원자) 역할 ID
+        self.booster_role_id = 1540636332404252734
 
         self.category_ids = {
             1: 1541419838977745037, 
@@ -480,6 +499,29 @@ class Banner(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(BannerPanelView(self))
 
+    # --- 데이터 마이그레이션 및 관리 함수 ---
+    def get_user_activity(self, user_id_str: str, today_date: str) -> dict:
+        """이전 포맷(단순 날짜 문자열)과 새로운 포맷(횟수/시간 포함)을 모두 호환하여 반환"""
+        data = self.daily_activity.get(user_id_str)
+        if isinstance(data, str):
+            if data == today_date:
+                return {"date": today_date, "count": 1, "last_timestamp": 0}
+            else:
+                return {"date": today_date, "count": 0, "last_timestamp": 0}
+        elif isinstance(data, dict):
+            if data.get("date") == today_date:
+                return data
+        return {"date": today_date, "count": 0, "last_timestamp": 0}
+
+    def record_post(self, user_id_str: str, today_date: str, now_ts: float):
+        """유저의 작성 횟수 및 최근 작성 시간을 업데이트"""
+        data = self.get_user_activity(user_id_str, today_date)
+        data["count"] += 1
+        data["last_timestamp"] = now_ts
+        data["date"] = today_date
+        self.daily_activity[user_id_str] = data
+        self.save_daily_activity()
+
     async def lock_channel_for_owner(self, channel: discord.TextChannel, owner: discord.Member, reason: str = "배너 채널 잠금"):
         try:
             overwrite = channel.overwrites_for(owner)
@@ -492,8 +534,25 @@ class Banner(commands.Cog):
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
-        if 31 <= current_minute <= 509:
+        today_date = now.strftime("%Y-%m-%d")
+        now_ts = now.timestamp()
+
+        is_booster = any(role.id == self.booster_role_id for role in owner.roles)
+        user_act = self.get_user_activity(str(owner.id), today_date)
+        
+        # 일반 유저 활동 금지 시간 체크
+        if not is_booster and (31 <= current_minute <= 509):
             return
+
+        # 부스터 유저 쿨타임/제한 체크
+        if is_booster:
+            if user_act["count"] >= 3:
+                return
+            if user_act["count"] > 0 and (now_ts - user_act["last_timestamp"] < 10800):
+                return
+        else:
+            if user_act["count"] >= 1:
+                return
 
         for channel in guild.text_channels:
             if channel.category_id in self.category_ids.values() and channel.name.startswith("⚡"):
@@ -502,7 +561,7 @@ class Banner(commands.Cog):
                     try:
                         overwrite = channel.overwrites_for(owner)
                         overwrite.send_messages = True
-                        await channel.set_permissions(owner, overwrite=overwrite, reason="제한 초기화로 인한 채널 잠금 해제")
+                        await channel.set_permissions(owner, overwrite=overwrite, reason="제한 초기화/쿨타임 완료로 인한 채널 잠금 해제")
                     except Exception as e:
                         print(f"[배너] 채널 잠금 해제 실패 ({channel.name}): {e}")
 
@@ -522,11 +581,13 @@ class Banner(commands.Cog):
                     return target
         return None
 
+    # 매 1분마다 채널 잠금/해제 상태를 모니터링하여 자동 조절 (부스터 쿨타임 해제도 여기서 처리됨)
     async def sync_all_banner_permissions(self) -> tuple[int, int]:
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
         today_date = now.strftime("%Y-%m-%d")
+        now_ts = now.timestamp()
 
         is_forbidden_time = (31 <= current_minute <= 509)
 
@@ -540,8 +601,17 @@ class Banner(commands.Cog):
                     if not owner:
                         continue
 
-                    has_posted_today = (self.daily_activity.get(str(owner.id)) == today_date)
-                    should_lock = is_forbidden_time or has_posted_today
+                    is_booster = any(role.id == self.booster_role_id for role in owner.roles)
+                    user_act = self.get_user_activity(str(owner.id), today_date)
+                    count = user_act["count"]
+                    last_ts = user_act["last_timestamp"]
+
+                    if is_booster:
+                        # 3회 초과이거나, 3시간(10800초) 쿨타임이 안 지났으면 잠금
+                        is_cooldown = (count > 0 and count < 3 and (now_ts - last_ts) < 10800)
+                        should_lock = (count >= 3) or is_cooldown
+                    else:
+                        should_lock = is_forbidden_time or (count >= 1)
 
                     overwrite = channel.overwrites_for(owner)
                     current_send_perm = overwrite.send_messages
@@ -549,20 +619,20 @@ class Banner(commands.Cog):
                     if should_lock and current_send_perm != False:
                         overwrite.send_messages = False
                         try:
-                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 동기화 (작성 완료/금지 시간 잠금)")
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 동기화 (제한 도달/금지/쿨타임 적용)")
                             synced_count += 1
                             await asyncio.sleep(0.2)
-                        except Exception as e:
-                            print(f"[동기화 에러] {channel.name}: {e}")
+                        except Exception:
+                            pass
 
                     elif not should_lock and current_send_perm != True:
                         overwrite.send_messages = True
                         try:
-                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 동기화 (작성 가능 해제)")
+                            await channel.set_permissions(owner, overwrite=overwrite, reason="⏰ 배너 동기화 (작성 가능/쿨타임 해제)")
                             synced_count += 1
                             await asyncio.sleep(0.2)
-                        except Exception as e:
-                            print(f"[동기화 에러] {channel.name}: {e}")
+                        except Exception:
+                            pass
                     else:
                         skipped_count += 1
 
@@ -600,7 +670,7 @@ class Banner(commands.Cog):
                 description=(
                     f"**#{ch_name}** 채널 관련 안내사항입니다.\n\n"
                     f"🚫 **스태프/관리자 개인 DM 문의 절대 금지 (위반 시 경고 조치)**\n"
-                    f"문의 및 이의신청은 **공식 봇** 또는 **고객센터({cs_mention})** / 티켓 문의를 이용해 주세요."
+                    f"문의 및 이의신청은 **고객센터({cs_mention})** 또는 티켓 문의를 이용해 주세요."
                 ),
                 color=discord.Color.orange(),
                 timestamp=discord.utils.utcnow()
@@ -608,13 +678,13 @@ class Banner(commands.Cog):
             embed.add_field(name="📝 처리 내용 / 사유", value=f"**{reason}**", inline=False)
             if original_content:
                 display_content = original_content[:500] + ("..." if len(original_content) > 500 else "")
-                embed.add_field(name="💬 작성하셨던 내용", value=f"```\n{display_content}\n```", inline=False)
+                embed.add_field(name="💬 작성 내용 일부", value=f"```\n{display_content}\n```", inline=False)
             await member.send(embed=embed)
         except discord.Forbidden:
             if channel:
                 try:
                     await channel.send(
-                        content=f"🔔 {member.mention} (DM 수신이 차단되어 규정 위반 안내 메시지가 채널에 작성되었습니다.)",
+                        content=f"🔔 {member.mention} (DM 수신 차단으로 채널에 위반 안내 게시됨)",
                         embed=embed,
                         delete_after=10
                     )
@@ -627,7 +697,7 @@ class Banner(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="🚨 배너 홍보 규정 위반 감지 (스태프 참고용)",
+            title="🚨 배너 홍보 규정 위반 감지",
             color=discord.Color.red(),
             timestamp=discord.utils.utcnow()
         )
@@ -637,36 +707,35 @@ class Banner(commands.Cog):
         embed.add_field(name="📄 발생 채널", value=message.channel.mention, inline=True)
         embed.add_field(name="📝 위반 사유", value=f"**{reason}**", inline=False)
 
-        content = message.content if message.content else "(텍스트 내용 없음)"
+        content = message.content if message.content else "(텍스트 없음)"
         if len(content) > 1000:
             content = content[:1000] + "... (생략)"
         embed.add_field(name="💬 작성 내용", value=f"```\n{content}\n```", inline=False)
 
         if message.attachments:
             file_names = ", ".join([att.filename for att in message.attachments])
-            embed.add_field(name="📁 첨부파일 목록", value=f"`{file_names}`", inline=False)
+            embed.add_field(name="📁 첨부파일", value=f"`{file_names}`", inline=False)
 
         await log_channel.send(embed=embed)
 
     async def send_to_review_channel(self, message: discord.Message, owner: discord.Member, today_date: str):
         review_channel = self.bot.get_channel(self.review_channel_id)
         if not review_channel:
-            try:
-                review_channel = await self.bot.fetch_channel(self.review_channel_id)
-            except Exception as e:
-                print(f"[배너 ERROR] 검토 채널(ID: {self.review_channel_id})을 불러올 수 없습니다: {e}")
-                return
+            return
+
+        is_booster = any(role.id == self.booster_role_id for role in owner.roles)
+        booster_badge = "💎 [부스터 혜택]" if is_booster else "👤 [일반 유저]"
 
         embed = discord.Embed(
-            title="🔍 짧은 홍보글 승인 검토 요청",
-            description=f"유저가 작성한 짧은 홍보글이 감지되었습니다. 아래 버튼으로 승인 여부를 결정해 주세요.",
+            title=f"🔍 {booster_badge} 짧은 홍보글 승인 검토 요청",
+            description=f"유저가 작성한 짧은 홍보글(또는 에브리원 태그 단독 사용) 감지. 아래 버튼으로 결정해 주세요.",
             color=discord.Color.gold(),
             timestamp=discord.utils.utcnow()
         )
         embed.add_field(name="👑 채널 소유자", value=f"{owner.mention} (`{owner.name}`)", inline=True)
         embed.add_field(name="👤 실제 작성자", value=f"{message.author.mention} (`{message.author.name}`)", inline=True)
         embed.add_field(name="📄 작성 채널", value=message.channel.mention, inline=True)
-        embed.add_field(name="🔗 메시지 바로가기", value=f"[작성된 글 이동]({message.jump_url})", inline=False)
+        embed.add_field(name="🔗 메시지 이동", value=f"[작성된 글 바로가기]({message.jump_url})", inline=False)
 
         content = message.content if message.content else "(텍스트 내용 없음)"
         if len(content) > 1000:
@@ -675,7 +744,7 @@ class Banner(commands.Cog):
 
         if message.attachments:
             file_names = ", ".join([att.filename for att in message.attachments])
-            embed.add_field(name="📁 첨부파일 목록", value=f"`{file_names}`", inline=False)
+            embed.add_field(name="📁 첨부파일", value=f"`{file_names}`", inline=False)
 
         view = PromoReviewView(self, message, owner, today_date)
         await review_channel.send(embed=embed, view=view)
@@ -697,7 +766,7 @@ class Banner(commands.Cog):
             del self.pending_review[owner.id]
             await self.send_penalty_log("⚠️ 검토 대기 중 홍보글 유저 직접 삭제 감지 (검토 취소됨)", message, owner)
         else:
-            await self.send_penalty_log("🗑️ 작성 완료된 홍보글 유저 삭제 감지 (1회 제한 및 잠금 유지)", message, owner)
+            await self.send_penalty_log("🗑️ 작성 완료된 홍보글 유저 삭제 감지 (제한/쿨타임 및 잠금 유지)", message, owner)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -730,8 +799,16 @@ class Banner(commands.Cog):
         now = datetime.now(kst)
         current_minute = now.hour * 60 + now.minute
         today_date = now.strftime("%Y-%m-%d")
+        now_ts = now.timestamp()
+        owner_id_str = str(owner.id)
 
-        if 31 <= current_minute <= 509:
+        is_booster = any(role.id == self.booster_role_id for role in owner.roles)
+        user_act = self.get_user_activity(owner_id_str, today_date)
+        count = user_act["count"]
+        last_ts = user_act["last_timestamp"]
+
+        # 일반 유저 활동 금지 시간 체크 (부스터는 패스)
+        if not is_booster and (31 <= current_minute <= 509):
             reason = "배너 활동 금지 시간 활동 (00:31~08:29)"
             await message.delete()
             await message.channel.send(f"⚠️ {message.author.mention} 현재는 배너 활동 금지 시간입니다.", delete_after=5)
@@ -747,6 +824,12 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
+        has_attachment = len(message.attachments) > 0
+        has_link = ("http://" in message.content) or ("https://" in message.content)
+        content_clean = message.content.replace("@everyone", "").replace("@here", "").strip()
+        has_long_text = len(content_clean) >= 10
+
+        # 분할 전송(모바일) 검토 중일 때
         if owner.id in self.pending_review:
             prev_msg_id = self.pending_review[owner.id]
             prev_msg = None
@@ -755,19 +838,27 @@ class Banner(commands.Cog):
             except Exception:
                 pass
 
-            has_attachment = (len(message.attachments) > 0) or (prev_msg and len(prev_msg.attachments) > 0)
+            comb_attach = has_attachment or (prev_msg and len(prev_msg.attachments) > 0)
             combined_content = ((prev_msg.content if prev_msg else "") + " " + message.content).strip()
-            has_link = ("http://" in combined_content) or ("https://" in combined_content)
-            content_clean = combined_content.replace("@everyone", "").replace("@here", "").strip()
-            has_long_text = len(content_clean) >= 10
+            comb_link = ("http://" in combined_content) or ("https://" in combined_content)
+            comb_clean = combined_content.replace("@everyone", "").replace("@here", "").strip()
+            comb_long = len(comb_clean) >= 10
 
-            if has_long_text and (has_attachment or has_link):
+            if comb_long and (comb_attach or comb_link):
                 del self.pending_review[owner.id]
-                self.daily_activity[str(owner.id)] = today_date
-                self.save_daily_activity()
+                self.record_post(owner_id_str, today_date, now_ts)
+                new_count = self.get_user_activity(owner_id_str, today_date)["count"]
                 
-                await self.lock_channel_for_owner(message.channel, owner, "오늘 배너 홍보글 작성 완료로 인한 채널 잠금")
-                await message.channel.send(f"✅ {message.author.mention} 글과 사진이 연속으로 감지되어 오늘 홍보글이 정상 등록되었습니다! 🔒 채널이 잠겼습니다.", delete_after=10)
+                if is_booster:
+                    if new_count >= 3:
+                        await self.lock_channel_for_owner(message.channel, owner, "오늘 부스터 3회 작성 완료로 인한 채널 잠금")
+                        await message.channel.send(f"✅ {message.author.mention} 홍보글 정상 등록! 🔒 오늘 부스터 혜택(3회)을 모두 소진하여 내일까지 채널이 잠깁니다.", delete_after=10)
+                    else:
+                        await self.lock_channel_for_owner(message.channel, owner, "부스터 홍보글 작성으로 인한 3시간 채널 잠금")
+                        await message.channel.send(f"✅ {message.author.mention} 홍보글 정상 등록! 🔒 3시간 쿨타임 동안 채널이 잠깁니다. (남은 횟수: {3 - new_count}회)", delete_after=10)
+                else:
+                    await self.lock_channel_for_owner(message.channel, owner, "오늘 배너 홍보글 작성 완료로 인한 채널 잠금")
+                    await message.channel.send(f"✅ {message.author.mention} 글과 사진이 연속 감지되어 정상 등록! 🔒 채널이 잠겼습니다.", delete_after=10)
                 return
 
             reason = "검토 대기 중 홍보글 중복 작성 시도"
@@ -776,46 +867,72 @@ class Banner(commands.Cog):
             await self.send_penalty_log(reason, message, owner)
             return
 
-        owner_id_str = str(owner.id)
-        if self.daily_activity.get(owner_id_str) == today_date:
-            reason = f"하루 1회 작성 제한 초과 (삭제 후 재작성 꼼수 시도 포함)"
-            await message.delete()
-            await message.channel.send(f"⚠️ {message.author.mention} 해당 배너 채널은 오늘 이미 작성 완료된 채널입니다. (글을 지워도 당일 재작성은 불가능합니다.)", delete_after=5)
-            await self.send_user_dm(owner, "배너 채널에는 하루에 1번만 작성하실 수 있습니다. (기존 글을 삭제하셔도 당일 재작성은 불가능합니다.)", channel=message.channel, original_content=message.content)
-            await self.send_penalty_log(reason, message, owner)
-            return
+        # 리미트 및 쿨타임 체크 로직
+        if is_booster:
+            if count >= 3:
+                reason = "부스터 하루 3회 작성 제한 초과"
+                await message.delete()
+                await message.channel.send(f"⚠️ {message.author.mention} 오늘 부스터 혜택(3회)을 모두 소진하셨습니다. (삭제 후 재작성 불가)", delete_after=5)
+                await self.send_user_dm(owner, "하루 최대 3회 부스터 작성 혜택을 모두 소진하였습니다.", channel=message.channel, original_content=message.content)
+                await self.send_penalty_log(reason, message, owner)
+                return
+            if count > 0:
+                time_passed = now_ts - last_ts
+                if time_passed < 10800:  # 3시간 = 10800초
+                    remain = int(10800 - time_passed)
+                    h = remain // 3600
+                    m = (remain % 3600) // 60
+                    reason = f"부스터 쿨타임 미준수 (남은 시간: {h}시간 {m}분)"
+                    await message.delete()
+                    await message.channel.send(f"⚠️ {message.author.mention} 부스터 쿨타임 대기 중입니다! (남은 시간: {h}시간 {m}분)", delete_after=5)
+                    await self.send_user_dm(owner, f"부스터 쿨타임(3시간)이 경과하지 않았습니다.\n• 남은 시간: {h}시간 {m}분", channel=message.channel, original_content=message.content)
+                    await self.send_penalty_log(reason, message, owner)
+                    return
+        else:
+            if count >= 1:
+                reason = "하루 1회 작성 제한 초과"
+                await message.delete()
+                await message.channel.send(f"⚠️ {message.author.mention} 해당 배너 채널은 오늘 이미 작성 완료된 채널입니다. (삭제 후 재작성 불가)", delete_after=5)
+                await self.send_user_dm(owner, "하루에 1번만 작성하실 수 있습니다.", channel=message.channel, original_content=message.content)
+                await self.send_penalty_log(reason, message, owner)
+                return
 
-        has_attachment = len(message.attachments) > 0
-        has_link = ("http://" in message.content) or ("https://" in message.content)
-        content_clean = message.content.replace("@everyone", "").replace("@here", "").strip()
-        has_long_text = len(content_clean) >= 10
-
+        # 정상 홍보글 전송 성공 시
         if has_long_text and (has_attachment or has_link):
-            self.daily_activity[owner_id_str] = today_date
-            self.save_daily_activity()
+            self.record_post(owner_id_str, today_date, now_ts)
+            new_count = self.get_user_activity(owner_id_str, today_date)["count"]
             
-            await self.lock_channel_for_owner(message.channel, owner, "오늘 배너 홍보글 작성 완료로 인한 채널 잠금")
-            await message.channel.send(f"🔒 {message.author.mention} 오늘 배너 홍보글 작성이 완료되어 채널이 잠겼습니다. (내일 00:00에 자동 해제)", delete_after=10)
+            if is_booster:
+                if new_count >= 3:
+                    await self.lock_channel_for_owner(message.channel, owner, "오늘 부스터 3회 작성 완료로 인한 채널 잠금")
+                    await message.channel.send(f"🔒 {message.author.mention} 오늘 부스터 혜택(3회) 작성이 모두 완료되어 내일까지 채널이 잠깁니다.", delete_after=10)
+                else:
+                    await self.lock_channel_for_owner(message.channel, owner, "부스터 홍보글 작성으로 인한 3시간 채널 잠금")
+                    await message.channel.send(f"🔒 {message.author.mention} 부스터 혜택 적용! 3시간 쿨타임 동안 채널이 잠깁니다. (남은 횟수: {3 - new_count}회)", delete_after=10)
+            else:
+                await self.lock_channel_for_owner(message.channel, owner, "오늘 배너 홍보글 작성 완료로 인한 채널 잠금")
+                await message.channel.send(f"🔒 {message.author.mention} 오늘 배너 홍보글 작성이 완료되어 채널이 잠겼습니다. (내일 00:00에 자동 해제)", delete_after=10)
             return
 
+        # 자격 미달시 스태프 검토 요청
         self.pending_review[owner.id] = message.id
         await self.send_to_review_channel(message, owner, today_date)
-        await message.channel.send(f"ℹ️ {message.author.mention} 작성하신 글은 검토 대기 상태입니다. (모바일 유저의 경우 지금 바로 사진을 추가로 올리시면 자동 승인 후 잠금 처리됩니다!)", delete_after=5)
+        await message.channel.send(f"ℹ️ {message.author.mention} 작성하신 글은 검토 대기 상태입니다. (모바일 유저는 지금 바로 사진을 올리시면 자동 승인됩니다!)", delete_after=5)
 
     @commands.command(name="배너패널", aliases=["배너"])
     async def setup_banner_panel(self, ctx):
         if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_channels:
-            return await ctx.send("❌ 이 명령어를 실행하려면 디스코드 **'관리자'** 또는 **'채널 관리'** 권한이 필요합니다.")
+            return await ctx.send("❌ 이 명령어를 실행하려면 관리자 권한이 필요합니다.")
 
         embed = discord.Embed(
             title="🖼️ 배너 채널 관리 패널",
             description=(
                 "스태프 전용 배너 컨트롤 도구입니다.\n\n"
-                "• **➕ 배너 생성**: 유저, 카테고리(1~4), 채널명을 입력하여 전용 배너 채널을 생성하고 역할 및 이용 규칙 DM을 전송합니다.\n"
-                "• **✏️ 이름 변경**: 지정된 배너 채널의 이름을 변경합니다.\n"
-                "• **🗑️ 배너 삭제**: 유저, 채널 ID, 삭제 사유를 입력하여 배너 채널을 삭제하고 역할을 회수합니다.\n"
-                "• **🔄 제한 초기화**: 특정 유저의 하루 작성 제한 및 검토 대기 상태를 리셋하고 채널 잠금을 해제합니다.\n"
-                "• **📢 전체 공지**: 등록된 모든 배너 채널에 일괄 안내 메시지를 전송합니다."
+                "• **➕ 배너 생성**: 유저 전용 채널 생성 및 규정 DM 전송\n"
+                "• **✏️ 이름 변경**: 지정된 배너 채널 이름 변경\n"
+                "• **🗑️ 배너 삭제**: 유저 채널 삭제 및 역할 회수\n"
+                "• **🔄 제한 초기화**: 특정 유저의 오늘 횟수 및 쿨타임 리셋\n"
+                "• **📢 전체 공지**: 모든 배너 채널에 일괄 공지 발송"
             ),
             color=discord.Color.dark_embed()
         )
@@ -824,9 +941,9 @@ class Banner(commands.Cog):
     @commands.command(name="배너동기화", aliases=["동기화"])
     async def sync_banner_command(self, ctx):
         if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_channels:
-            return await ctx.send("❌ 이 명령어를 실행하려면 관리자 권한이 필요합니다.")
+            return await ctx.send("❌ 관리자 권한이 필요합니다.")
 
-        msg = await ctx.send("🔄 현재 시간 및 작성 기록 기준으로 모든 배너 채널 권한을 동기화 중입니다...")
+        msg = await ctx.send("🔄 현재 시간 및 작성 기록 기준으로 모든 배너 채널 권한(부스터 쿨타임 포함)을 동기화 중입니다...")
         synced, skipped = await self.sync_all_banner_permissions()
 
         kst = timezone(timedelta(hours=9))
@@ -834,8 +951,8 @@ class Banner(commands.Cog):
         
         await msg.edit(
             content=(
-                f"✅ **배너 채널 권한 동기화 완료** (현재 시간: `{now_str}`)\n"
-                f"• 수정/잠금/해제된 채널: `{synced}`개\n"
+                f"✅ **배너 채널 권한 동기화 완료** (`{now_str}`)\n"
+                f"• 수정/쿨타임 해제된 채널: `{synced}`개\n"
                 f"• 이미 정상인 채널: `{skipped}`개"
             )
         )
