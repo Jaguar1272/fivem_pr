@@ -1,147 +1,117 @@
+import asyncio
 import discord
 from discord.ext import commands
-import os
-import asyncio
-import io
 
-# 고객센터 로그 채널 ID
-LOG_CHANNEL_ID = 1491268664564121773
-
-
-# --- 대화 내역을 .txt 파일로 생성하는 함수 ---
-async def create_ticket_transcript(channel: discord.TextChannel) -> discord.File:
-    lines = [
-        "==================================================",
-        f" 📝 티켓 대화 기록: #{channel.name}",
-        f" 📅 추출 시각: {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)",
-        "==================================================\n"
-    ]
-
-    # 채널의 모든 메시지를 과거순(oldest_first=True)으로 수집
-    async for msg in channel.history(limit=None, oldest_first=True):
-        timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        author = f"{msg.author.name} ({msg.author.id})"
-        content = msg.clean_content or ""
-
-        attachments = ""
-        if msg.attachments:
-            attachments = "\n   📎 [첨부파일]: " + ", ".join([att.url for att in msg.attachments])
-
-        lines.append(f"[{timestamp}] {author}\n: {content}{attachments}\n")
-
-    transcript_text = "\n".join(lines)
-    
-    # 메모리 버퍼에 txt 데이터 담기
-    buffer = io.BytesIO(transcript_text.encode('utf-8'))
-    return discord.File(fp=buffer, filename=f"{channel.name}_대화기록.txt")
-
-
-# 티켓 안에서 사용되는 '티켓 닫기' 버튼
+# --- 1. 티켓 내부 제어 버튼 (티켓 닫기) ---
 class TicketControlView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, cog):
         super().__init__(timeout=None)
+        self.cog = cog
 
-    @discord.ui.button(label="🔒 티켓 닫기", style=discord.ButtonStyle.red, custom_id="close_ticket")
+    @discord.ui.button(label="🔒 티켓 닫기", style=discord.ButtonStyle.danger, custom_id="btn_close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⏳ 대화 내역을 추출하는 중입니다... 5초 뒤 채널이 삭제됩니다.", ephemeral=False)
-        
-        # 1. 대화 기록 .txt 파일 생성
-        transcript_file = await create_ticket_transcript(interaction.channel)
+        if not interaction.user.guild_permissions.manage_channels and not interaction.user.guild_permissions.manage_messages:
+            return await interaction.response.send_message("❌ 티켓은 스태프 또는 관리자만 닫을 수 있습니다.", ephemeral=True)
 
-        # 2. 로그 채널로 닫기 기록 및 .txt 파일 전송
-        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            embed = discord.Embed(
-                title="🗑️ 고객센터 티켓 종료 로그",
-                color=discord.Color.dark_gray(),
-                timestamp=discord.utils.utcnow()
-            )
-            embed.add_field(name="📄 삭제된 채널명", value=f"`{interaction.channel.name}`", inline=True)
-            embed.add_field(name="🛡️ 종료 처리자", value=f"{interaction.user.mention} (`{interaction.user.name}`)", inline=True)
-            
-            # .txt 파일 첨부 전송
-            await log_channel.send(embed=embed, file=transcript_file)
-
+        await interaction.response.send_message("🔒 5초 후 문의 티켓 채널이 삭제됩니다...")
         await asyncio.sleep(5)
-        await interaction.channel.delete(reason=f"티켓 종료 (요청자: {interaction.user.name})")
+        try:
+            await interaction.channel.delete(reason=f"티켓 종료 (종료 스태프: {interaction.user.name})")
+        except Exception as e:
+            print(f"[티켓] 채널 삭제 에러: {e}")
 
 
-# 메인 채널에 띄워두는 '문의하기' 버튼
-class TicketPanelView(discord.ui.View):
-    def __init__(self):
+# --- 2. 고객센터 메인 패널 버튼 (티켓 생성) ---
+class TicketCreateView(discord.ui.View):
+    def __init__(self, cog):
         super().__init__(timeout=None)
+        self.cog = cog
 
-    @discord.ui.button(label="🎫 고객센터 문의하기", style=discord.ButtonStyle.primary, custom_id="create_ticket")
-    async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="📩 문의 티켓 열기", style=discord.ButtonStyle.primary, emoji="🎫", custom_id="btn_open_ticket")
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
-        
-        # 설정된 티켓 카테고리 ID
-        ticket_category_id = 1490073085016014848
-        category = guild.get_channel(ticket_category_id)
-        
-        channel_name = f"문의-{interaction.user.name.lower()}"
-        
-        # 이미 진행 중인 티켓 채널이 있는지 확인
-        existing_channel = discord.utils.get(guild.channels, name=channel_name)
-        if existing_channel:
-            return await interaction.response.send_message(f"⚠️ 이미 진행 중인 문의 내역이 있습니다: {existing_channel.mention}", ephemeral=True)
+        user = interaction.user
 
-        # 권한 설정: 에브리원 차단, 요청 유저 및 봇 허용
+        ticket_channel_name = f"ticket-{user.name.lower().replace(' ', '-')}"
+        existing_channel = discord.utils.get(guild.text_channels, name=ticket_channel_name)
+        if existing_channel:
+            return await interaction.response.send_message(f"⚠️ 이미 생성된 문의 티켓이 있습니다: {existing_channel.mention}", ephemeral=True)
+
+        category = guild.get_channel(self.cog.ticket_category_id)
+        staff_role = guild.get_role(self.cog.staff_role_id)
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, embed_links=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
-        
-        # 관리자 역할도 볼 수 있도록 권한 부여
-        admin_role_id = int(os.getenv("ADMIN_ROLE_ID", 0))
-        admin_role = guild.get_role(admin_role_id)
-        if admin_role:
-            overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-        # 채널 생성
-        channel = await guild.create_text_channel(name=channel_name, category=category, overwrites=overwrites)
-        
-        # 생성된 채널 내부 메시지 전송
-        embed = discord.Embed(
-            title="🎫 1:1 고객센터", 
-            description=f"{interaction.user.mention}님, 환영합니다!\n어떤 점이 궁금하신가요? 관리자가 확인 후 답변해 드립니다.\n\n문의가 종료되면 아래의 `🔒 티켓 닫기` 버튼을 눌러주세요.", 
-            color=discord.Color.blue()
-        )
-        await channel.send(content=f"{interaction.user.mention}", embed=embed, view=TicketControlView())
-        
-        # 로그 채널로 생성 기록 전송
-        log_channel = guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            log_embed = discord.Embed(
-                title="🎫 고객센터 티켓 생성 로그",
-                color=discord.Color.green(),
+        try:
+            ticket_channel = await guild.create_text_channel(
+                name=ticket_channel_name,
+                category=category,
+                overwrites=overwrites,
+                topic=f"ticket_owner_id:{user.id}"
+            )
+
+            embed = discord.Embed(
+                title="🎫 고객센터 1:1 문의 채널",
+                description=(
+                    f"안녕하세요 {user.mention}님! 문의사항을 아래에 작성해 두시면 담당 스태프가 확인 후 답변드립니다.\n\n"
+                    f"🚫 **[경고] 스태프 개인 DM 문의 절대 금지**\n"
+                    f"• 스태프/관리자에게 개인 DM 문의 시 **사전 통보 없이 경고 조치**됩니다.\n"
+                    f"• 모든 문의는 본 티켓 채널을 통해서만 진행해 주세요.\n"
+                    f"• 문의가 완결되면 아래 **'🔒 티켓 닫기'** 버튼을 눌러주세요."
+                ),
+                color=discord.Color.blue(),
                 timestamp=discord.utils.utcnow()
             )
-            log_embed.add_field(name="👤 생성 유저", value=f"{interaction.user.mention} (`{interaction.user.name}`)", inline=True)
-            log_embed.add_field(name="📄 생성된 채널", value=channel.mention, inline=True)
-            await log_channel.send(embed=log_embed)
+            embed.set_footer(text=f"신청자 ID: {user.id}")
 
-        await interaction.response.send_message(f"✅ 티켓이 생성되었습니다. 이동해주세요: {channel.mention}", ephemeral=True)
+            # 📢 티켓 오픈 시 @everyone 전체 멘션 발송 (알림 보장)
+            await ticket_channel.send(
+                content="@everyone 📩 새로운 문의 티켓이 개설되었습니다!",
+                embed=embed,
+                view=TicketControlView(self.cog),
+                allowed_mentions=discord.AllowedMentions(everyone=True)
+            )
+            await interaction.response.send_message(f"✅ 문의 티켓이 성공적으로 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
+
+        except Exception as e:
+            await interaction.response.send_message(f"❌ 티켓 생성 중 오류가 발생했습니다: `{e}`", ephemeral=True)
 
 
-class TicketSystem(commands.Cog):
+# --- 3. 메인 Cog 클래스 ---
+class Ticket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot.add_view(TicketPanelView())
-        self.bot.add_view(TicketControlView())
+        self.ticket_category_id = 1541419838977745037  # 티켓 카테고리 ID
+        self.staff_role_id = 1417209680559603953       # 스태프 역할 ID
 
-    @commands.command(name="티켓설정")
-    @commands.has_permissions(administrator=True)
-    async def setup_ticket(self, ctx):
-        """지정한 채널에 고객센터 티켓 생성 패널을 띄웁니다."""
+    async def cog_load(self):
+        self.bot.add_view(TicketCreateView(self))
+        self.bot.add_view(TicketControlView(self))
+
+    @commands.command(name="티켓패널", aliases=["티켓"])
+    async def setup_ticket_panel(self, ctx):
+        if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_channels:
+            return await ctx.send("❌ 명령어를 실행하려면 관리자 권한이 필요합니다.")
+
         embed = discord.Embed(
-            title="📬 파이브엠 홍보나라 고객센터",
-            description="배너 신청, 유저 신고 등 모든 문의 업무를 진행하는 곳입니다.\n\n아래의 **[🎫 고객센터 문의하기]** 버튼을 누르시면 1:1 대화가 가능한 채널이 생성됩니다.",
-            color=discord.Color.green()
+            title="🎧 파이브엠 홍보나라 고객센터 문의",
+            description=(
+                "서버 이용, 배너 신청, 제재 문의, 기타 알림 관련 문의사항은 아래 버튼을 눌러 1:1 티켓을 생성해 주세요.\n\n"
+                "🚨 **[스태프 개인 DM 문의 금지 지침]**\n"
+                "• **스태프/관리자 개인 DM으로 문의하는 행위는 엄격히 금지**됩니다.\n"
+                "• DM 문의 적발 시 **경고 조치**가 부여되오니 반드시 본 공식 티켓 창구를 통해 문의해 주시기 바랍니다."
+            ),
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow()
         )
-        await ctx.send(embed=embed, view=TicketPanelView())
-
+        embed.set_footer(text="파이브엠 홍보나라 고객센터")
+        await ctx.send(embed=embed, view=TicketCreateView(self))
 
 async def setup(bot):
-    await bot.add_cog(TicketSystem(bot))
+    await bot.add_cog(Ticket(bot))
