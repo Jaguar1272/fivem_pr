@@ -70,7 +70,6 @@ class TicketCreateView(discord.ui.View):
             )
             embed.set_footer(text=f"신청자 ID: {user.id}")
 
-            # 📢 티켓 오픈 시 @everyone 전체 멘션 발송 (알림 보장)
             await ticket_channel.send(
                 content="@everyone 📩 새로운 문의 티켓이 개설되었습니다!",
                 embed=embed,
@@ -87,8 +86,9 @@ class TicketCreateView(discord.ui.View):
 class Ticket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.ticket_category_id = 1541419838977745037  # 티켓 카테고리 ID
-        self.staff_role_id = 1417209680559603953       # 스태프 역할 ID
+        # 📌 수정된 카테고리 ID 적용
+        self.ticket_category_id = 1490073085016014848
+        self.staff_role_id = 1417209680559603953
 
     async def cog_load(self):
         self.bot.add_view(TicketCreateView(self))
