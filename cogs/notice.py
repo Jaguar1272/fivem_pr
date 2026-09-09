@@ -1,5 +1,9 @@
 import discord
 from discord.ext import commands
+import asyncio
+
+# 📌 지정된 공식 문의처 링크 상수 정의
+INQUIRY_URL = "https://discord.com/channels/1417202549295153305/1490073588655718541/1545055510590660739"
 
 # --- 공지 작성/수정/삭제 Modal (입력 폼) ---
 class NoticeModal(discord.ui.Modal):
@@ -26,7 +30,8 @@ class NoticeModal(discord.ui.Modal):
                 label="📝 공지 내용",
                 style=discord.TextStyle.paragraph,
                 placeholder="공지할 내용을 입력하세요.",
-                required=True
+                required=True,
+                max_length=4000  # 글자 수 제한 방지 안전장치
             )
             self.add_item(self.content_input)
 
@@ -34,13 +39,15 @@ class NoticeModal(discord.ui.Modal):
             self.title_input = discord.ui.TextInput(
                 label="📌 임베드 제목",
                 placeholder="공지 제목을 입력하세요.",
-                required=True
+                required=True,
+                max_length=256
             )
             self.content_input = discord.ui.TextInput(
                 label="📝 임베드 내용",
                 style=discord.TextStyle.paragraph,
                 placeholder="공지 내용을 입력하세요.",
-                required=True
+                required=True,
+                max_length=4000  # 글자 수 제한 방지 안전장치
             )
             self.add_item(self.title_input)
             self.add_item(self.content_input)
@@ -58,7 +65,8 @@ class NoticeModal(discord.ui.Modal):
                     label="✏️ 수정할 내용",
                     style=discord.TextStyle.paragraph,
                     placeholder="새로운 공지 내용을 입력하세요.",
-                    required=True
+                    required=True,
+                    max_length=4000  # 글자 수 제한 방지 안전장치
                 )
                 self.add_item(self.content_input)
 
@@ -142,12 +150,18 @@ class NoticeCog(commands.Cog):
     @commands.command(name="공지패널", aliases=["공지관리"])
     async def setup_notice_panel(self, ctx):
         if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_messages:
-            return await ctx.send("❌ 이 명령어를 실행하려면 디스코드 **'관리자'** 또는 **'메시지 관리'** 권한이 필요합니다.")
+            return await ctx.send("❌ 이 명령어를 실행하려면 디스코드 **'관리자'** 또는 **'메시지 관리'** 권한이 필요합니다.", delete_after=5)
+
+        # 🧹 명령어 입력 메시지 자동 삭제
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
 
         embed = discord.Embed(
             title="📢 공지사항 관리 패널",
-            description="관리자 전용 도구입니다.",
-            color=discord.Color.dark_embed() # 오류 부분 정상 수정 완료
+            description=f"관리자 전용 도구입니다.\n\n🔗 [공식 문의처 바로가기]({INQUIRY_URL})",
+            color=discord.Color.dark_embed()
         )
         await ctx.send(embed=embed, view=NoticePanelView())
 
