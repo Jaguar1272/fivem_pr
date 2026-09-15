@@ -19,7 +19,7 @@ class TicketCloseView(discord.ui.View):
         await interaction.response.send_message("🔒 잠시 후 티켓 채널이 삭제됩니다...", ephemeral=True)
         
         # 📋 로그 채널에 티켓 마감 기록 전송
-        await self.cog.send_ticket_log("🗑️ 티켓 마감", interaction.channel, interaction.user)
+        await self.cog.send_ticket_log("티켓 마감", interaction.channel, interaction.user)
 
         await asyncio.sleep(2)
         try:
@@ -43,7 +43,7 @@ class TicketCreateView(discord.ui.View):
         if existing_channel:
             return await interaction.response.send_message(f"⚠️ 이미 생성된 티켓 채널이 있습니다: {existing_channel.mention}", ephemeral=True)
 
-        # 티켓 카테고리 가져오기
+        # 티켓 카테고리 가져오기 (정확한 ID 반영)
         category = guild.get_channel(self.cog.ticket_category_id) if self.cog.ticket_category_id else None
 
         overwrites = {
@@ -60,7 +60,7 @@ class TicketCreateView(discord.ui.View):
         try:
             channel = await guild.create_text_channel(
                 name=f"🎫ㆍ{user.name}",
-                category=category,  # 📁 누락되었던 카테고리 지정 정상 반영
+                category=category,
                 overwrites=overwrites,
                 topic=f"ticket_owner:{user.id}"
             )
@@ -86,7 +86,7 @@ class TicketCreateView(discord.ui.View):
             )
 
             # 📋 로그 채널에 티켓 생성 기록 전송
-            await self.cog.send_ticket_log(" 생성", channel, user)
+            await self.cog.send_ticket_log("생성", channel, user)
 
             await interaction.response.send_message(f"✅ 티켓 채널이 생성되었습니다: {channel.mention}", ephemeral=True)
         except Exception as e:
@@ -96,9 +96,9 @@ class TicketCreateView(discord.ui.View):
 class Ticket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # ⚙️ 설정값: 필요에 따라 티켓 카테고리 ID와 로그 채널 ID를 변경하세요.
-        self.ticket_category_id = 1541419838977745037  # 예시 카테고리 ID (배너 등과 맞추거나 수정 가능)
-        self.log_channel_id = 1417208003027009636       # 기존 로그 채널 ID 연동
+        # ⚙️ 사용자가 제공한 정확한 ID 적용
+        self.ticket_category_id = 1490073085016014848  # 카테고리 ID
+        self.log_channel_id = 1491268664564121773       # 문의로그 채널 ID
 
     async def cog_load(self):
         self.bot.add_view(TicketCreateView(self))
