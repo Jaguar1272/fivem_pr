@@ -133,13 +133,37 @@ class BannerAnnouncementModal(discord.ui.Modal, title="📢 배너 채널 전체
         await interaction.followup.send(f"✅ 배너 전체 공지 전송 완료! (성공: {success}, 실패: {fail})", ephemeral=True)
 
 
-# --- 🛠️ 배너 관리 패널 뷰 ---
+# --- 🛠️ 스태프 전용 배너 관리 패널 뷰 (모든 기능 통합) ---
 class BannerPanelView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="⚡ 배너 전체 공지", style=discord.ButtonStyle.primary, emoji="📢", custom_id="btn_banner_notice")
+    @discord.ui.button(label="배너 생성", style=discord.ButtonStyle.primary, emoji="➕", custom_id="btn_banner_create")
+    async def create_banner(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_channels:
+            return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
+        await interaction.response.send_message("➕ 배너 생성 기능 실행 (추후 모달 연동)", ephemeral=True)
+
+    @discord.ui.button(label="이름 변경", style=discord.ButtonStyle.secondary, emoji="✏️", custom_id="btn_banner_rename")
+    async def rename_banner(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_channels:
+            return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
+        await interaction.response.send_message("✏️ 이름 변경 기능 실행", ephemeral=True)
+
+    @discord.ui.button(label="배너 삭제", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id="btn_banner_delete")
+    async def delete_banner(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_channels:
+            return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
+        await interaction.response.send_message("🗑️ 배너 삭제 기능 실행", ephemeral=True)
+
+    @discord.ui.button(label="제한 초기화", style=discord.ButtonStyle.secondary, emoji="🔄", custom_id="btn_banner_reset")
+    async def reset_banner(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_channels:
+            return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
+        await interaction.response.send_message("🔄 제한 초기화 기능 실행", ephemeral=True)
+
+    @discord.ui.button(label="배너 전체 공지", style=discord.ButtonStyle.success, emoji="📢", custom_id="btn_banner_notice")
     async def send_notice(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator and not interaction.user.guild_permissions.manage_channels:
             return await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
@@ -195,7 +219,7 @@ class Banner(commands.Cog):
 
         embed = discord.Embed(
             title="⚡ 파이브엠 홍보나라 배너 관리 패널",
-            description=f"아래 버튼을 통해 배너 채널들에 공지를 일괄 발송할 수 있습니다.\n\n🔗 **[공식 문의처 바로가기]({INQUIRY_URL})**",
+            description=f"스태프 전용 배너 컨트롤 도구입니다. 아래 버튼을 통해 관리하세요.\n\n🔗 **[공식 문의처 바로가기]({INQUIRY_URL})**",
             color=discord.Color.dark_embed()
         )
         await ctx.send(embed=embed, view=BannerPanelView(self))
