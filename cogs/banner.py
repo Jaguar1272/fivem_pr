@@ -16,47 +16,17 @@ class BannerApplyModal(discord.ui.Modal, title="⚡ 파이브엠 홍보나라 �
         super().__init__()
         self.cog = cog
 
-    server_name = discord.ui.TextInput(
-        label="1. 서버 이름 (서버명)",
-        placeholder="서버 이름을 입력하세요.",
-        required=True,
-        max_length=100
-    )
-    category_type = discord.ui.TextInput(
-        label="2. 서버 장르 및 카테고리",
-        placeholder="1: 맞디스코드 / 2: 커뮤니티 / 3: 롤플레이 / 4: 팩션",
-        required=True,
-        max_length=100
-    )
-    server_link = discord.ui.TextInput(
-        label="3. 디스코드 영구 초대 링크",
-        placeholder="https://discord.gg/...",
-        required=True,
-        max_length=200
-    )
-    server_desc = discord.ui.TextInput(
-        label="4. 서버 핵심 특징 및 소개 (3~4줄)",
-        placeholder="서버의 특징과 매력을 간략히 적어주세요.",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=1000
-    )
-    extra_check = discord.ui.TextInput(
-        label="5. 이미지 첨부(O/X) 및 6. 규칙 동의(동의/비동의)",
-        placeholder="예: 이미지 O / 규칙 동의",
-        required=True,
-        max_length=100
-    )
+    server_name = discord.ui.TextInput(label="1. 서버 이름 (서버명)", placeholder="서버 이름을 입력하세요.", required=True, max_length=100)
+    category_type = discord.ui.TextInput(label="2. 서버 장르 및 카테고리", placeholder="1: 맞디스코드 / 2: 커뮤니티 / 3: 롤플레이 / 4: 팩션", required=True, max_length=100)
+    server_link = discord.ui.TextInput(label="3. 디스코드 영구 초대 링크", placeholder="https://discord.gg/...", required=True, max_length=200)
+    server_desc = discord.ui.TextInput(label="4. 서버 핵심 특징 및 소개 (3~4줄)", placeholder="서버의 특징과 매력을 간략히 적어주세요.", style=discord.TextStyle.paragraph, required=True, max_length=1000)
+    extra_check = discord.ui.TextInput(label="5. 이미지 첨부(O/X) 및 6. 규칙 동의(동의/비동의)", placeholder="예: 이미지 O / 규칙 동의", required=True, max_length=100)
 
     async def on_submit(self, interaction: discord.Interaction):
         user = interaction.user
         review_channel = interaction.guild.get_channel(self.cog.review_channel_id)
         
-        embed = discord.Embed(
-            title="📥 [신규] 배너 채널 개설 신청 접수",
-            color=discord.Color.gold(),
-            timestamp=discord.utils.utcnow()
-        )
+        embed = discord.Embed(title="📥 [신규] 배너 채널 개설 신청 접수", color=discord.Color.gold(), timestamp=discord.utils.utcnow())
         embed.add_field(name="신청자", value=f"{user.mention} (`{user.id}`)", inline=False)
         embed.add_field(name="1. 서버 이름", value=self.server_name.value, inline=True)
         embed.add_field(name="2. 카테고리", value=self.category_type.value, inline=True)
@@ -67,11 +37,7 @@ class BannerApplyModal(discord.ui.Modal, title="⚡ 파이브엠 홍보나라 �
 
         if review_channel:
             await review_channel.send(embed=embed)
-
-        await interaction.response.send_message(
-            "✅ 배너 신청서가 성공적으로 접수되었습니다! 스태프 확인 후 안내해 드리겠습니다.", 
-            ephemeral=True
-        )
+        await interaction.response.send_message("✅ 배너 신청서가 성공적으로 접수되었습니다! 스태프 확인 후 안내해 드리겠습니다.", ephemeral=True)
 
 
 # --- 🔘 신청 패널 뷰 ---
@@ -91,19 +57,8 @@ class BannerAnnouncementModal(discord.ui.Modal, title="📢 배너 채널 전체
         super().__init__()
         self.cog = cog
 
-    notice_title = discord.ui.TextInput(
-        label="공지 제목",
-        placeholder="공지 제목을 입력하세요",
-        required=True,
-        max_length=100
-    )
-    notice_content = discord.ui.TextInput(
-        label="공지 내용 (장문 지원)",
-        placeholder="공지 내용을 입력하세요",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=3000
-    )
+    notice_title = discord.ui.TextInput(label="공지 제목", placeholder="공지 제목을 입력하세요", required=True, max_length=100)
+    notice_content = discord.ui.TextInput(label="공지 내용 (장문 지원)", placeholder="공지 내용을 입력하세요", style=discord.TextStyle.paragraph, required=True, max_length=3000)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -115,15 +70,9 @@ class BannerAnnouncementModal(discord.ui.Modal, title="📢 배너 채널 전체
         for channel in guild.text_channels:
             if channel.name.startswith("⚡"):
                 try:
-                    embed = discord.Embed(
-                        title=f"📢 {title}",
-                        description=content,
-                        color=discord.Color.blue(),
-                        timestamp=discord.utils.utcnow()
-                    )
+                    embed = discord.Embed(title=f"📢 {title}", description=content, color=discord.Color.blue(), timestamp=discord.utils.utcnow())
                     embed.add_field(name="🔗 공식 문의처", value=f"[바로가기]({INQUIRY_URL})", inline=False)
                     embed.set_footer(text=f"발송 관리자: {interaction.user.display_name}")
-                    
                     await channel.send(embed=embed)
                     success += 1
                     await asyncio.sleep(0.4)
@@ -139,18 +88,8 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         super().__init__()
         self.cog = cog
 
-    user_id = discord.ui.TextInput(
-        label="배너 이용자 유저 ID",
-        placeholder="유저의 디스코드 ID를 입력하세요",
-        required=True,
-        max_length=30
-    )
-    server_name = discord.ui.TextInput(
-        label="서버 이름 (채널명에 반영)",
-        placeholder="예: 홍보나라서버",
-        required=True,
-        max_length=50
-    )
+    user_id = discord.ui.TextInput(label="배너 이용자 유저 ID", placeholder="유저의 디스코드 ID를 입력하세요", required=True, max_length=30)
+    server_name = discord.ui.TextInput(label="서버 이름 (채널명에 반영)", placeholder="예: 홍보나라서버", required=True, max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.manage_channels:
@@ -170,122 +109,113 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         }
 
         try:
-            channel = await guild.create_text_channel(
-                name=f"⚡ㆍ{self.server_name.value.strip()}",
-                category=category,
-                overwrites=overwrites,
-                topic=f"banner_owner:{target_user.id}"
-            )
-            embed = discord.Embed(
-                title=f"⚡ {target_user.mention} 님의 배너 채널이 생성되었습니다!",
-                description=f"환영합니다! 본 채널에서 홍보 규칙에 맞게 글을 작성해 주세요.\n\n🔗 **[공식 문의처]({INQUIRY_URL})**",
-                color=discord.Color.green(),
-                timestamp=discord.utils.utcnow()
-            )
+            channel = await guild.create_text_channel(name=f"⚡ㆍ{self.server_name.value.strip()}", category=category, overwrites=overwrites, topic=f"banner_owner:{target_user.id}")
+            embed = discord.Embed(title=f"⚡ {target_user.mention} 님의 배너 채널이 생성되었습니다!", description=f"환영합니다! 본 채널에서 홍보 규칙에 맞게 글을 작성해 주세요.\n\n🔗 **[공식 문의처]({INQUIRY_URL})**", color=discord.Color.green(), timestamp=discord.utils.utcnow())
             await channel.send(embed=embed)
             await interaction.response.send_message(f"✅ 배너 채널이 성공적으로 생성되었습니다: {channel.mention}", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ 채널 생성 실패: `{e}`", ephemeral=True)
 
 
-# --- ✏️ 2. 이름 변경 Modal ---
+# --- ✏️ 2. 이름 변경 Modal (채널 ID 입력 복구됨) ---
 class BannerRenameModal(discord.ui.Modal, title="✏️ 배너 채널 이름 변경"):
     def __init__(self, cog):
         super().__init__()
         self.cog = cog
 
-    new_name = discord.ui.TextInput(
-        label="새로운 서버 이름",
-        placeholder="변경할 서버 이름을 입력하세요 (⚡ㆍ 자동으로 붙음)",
-        required=True,
-        max_length=50
-    )
+    channel_id = discord.ui.TextInput(label="채널 ID", placeholder="이름을 변경할 채널 ID를 입력하세요", required=True, max_length=30)
+    new_name = discord.ui.TextInput(label="새로운 서버 이름", placeholder="변경할 서버 이름을 입력하세요 (⚡ㆍ 자동으로 붙음)", required=True, max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.manage_channels:
             return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
-        
-        channel = interaction.channel
-        if not channel.name.startswith("⚡"):
-            return await interaction.response.send_message("❌ 이 명령어는 배너 채널 안에서 실행해야 합니다.", ephemeral=True)
 
         try:
-            await channel.edit(name=f"⚡ㆍ{self.new_name.value.strip()}")
-            await interaction.response.send_message(f"✅ 배너 채널 이름이 변경되었습니다.", ephemeral=True)
+            target_channel = interaction.guild.get_channel(int(self.channel_id.value.strip()))
+            if not target_channel:
+                return await interaction.response.send_message("❌ 해당 ID의 채널을 찾을 수 없습니다.", ephemeral=True)
+
+            await target_channel.edit(name=f"⚡ㆍ{self.new_name.value.strip()}")
+            await interaction.response.send_message(f"✅ {target_channel.mention} 채널 이름이 변경되었습니다.", ephemeral=True)
+        except ValueError:
+            await interaction.response.send_message("❌ 채널 ID는 숫자만 입력해야 합니다.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ 이름 변경 실패: `{e}`", ephemeral=True)
 
 
-# --- 🗑️ 3. 배너 삭제 Modal ---
+# --- 🗑️ 3. 배너 삭제 Modal (유저 / 채널ID / 사유 입력 완벽 복구됨) ---
 class BannerDeleteModal(discord.ui.Modal, title="🗑️ 배너 채널 삭제"):
     def __init__(self, cog):
         super().__init__()
         self.cog = cog
 
-    reason = discord.ui.TextInput(
-        label="채널 삭제 사유",
-        placeholder="삭제 사유를 입력하세요",
-        required=True,
-        max_length=100
-    )
+    target_user = discord.ui.TextInput(label="유저 (디스코드 ID)", placeholder="해당 배너의 소유자 ID", required=True, max_length=30)
+    channel_id = discord.ui.TextInput(label="채널 ID", placeholder="삭제할 배너 채널의 ID", required=True, max_length=30)
+    reason = discord.ui.TextInput(label="삭제 사유", placeholder="삭제 사유를 상세히 입력하세요", required=True, max_length=100)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.manage_channels:
             return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
-        
-        channel = interaction.channel
-        if not channel.name.startswith("⚡"):
-            return await interaction.response.send_message("❌ 이 명령어는 삭제할 배너 채널 안에서 실행해주세요.", ephemeral=True)
 
-        await interaction.response.send_message("🗑️ 잠시 후 배너 채널이 삭제됩니다...", ephemeral=True)
-        await asyncio.sleep(2)
         try:
-            await channel.delete(reason=f"Banner Delete by {interaction.user.name}: {self.reason.value}")
-        except Exception:
-            pass
+            target_channel = interaction.guild.get_channel(int(self.channel_id.value.strip()))
+            if not target_channel:
+                return await interaction.response.send_message("❌ 해당 ID의 채널을 찾을 수 없습니다.", ephemeral=True)
+
+            await interaction.response.send_message(f"🗑️ 잠시 후 {target_channel.mention} 채널이 삭제됩니다...", ephemeral=True)
+
+            log_channel = interaction.guild.get_channel(self.cog.review_channel_id)
+            if log_channel:
+                embed = discord.Embed(title="🗑️ 배너 채널 삭제 완료", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+                embed.add_field(name="삭제된 채널", value=f"#{target_channel.name}", inline=True)
+                embed.add_field(name="소유자 ID", value=self.target_user.value.strip(), inline=True)
+                embed.add_field(name="실행 스태프", value=interaction.user.mention, inline=True)
+                embed.add_field(name="삭제 사유", value=self.reason.value.strip(), inline=False)
+                await log_channel.send(embed=embed)
+
+            await asyncio.sleep(2)
+            await target_channel.delete(reason=f"Banner Delete by {interaction.user.name}: {self.reason.value}")
+        except ValueError:
+            await interaction.response.send_message("❌ 채널 ID와 유저 ID는 숫자만 입력해야 합니다.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ 채널 삭제 실패: `{e}`", ephemeral=True)
 
 
-# --- 🔄 4. 제한 초기화 Modal ---
+# --- 🔄 4. 제한 초기화 Modal (채널 ID 입력 복구됨) ---
 class BannerResetModal(discord.ui.Modal, title="🔄 배너 이용 제한 초기화 (잠금 해제)"):
     def __init__(self, cog):
         super().__init__()
         self.cog = cog
 
-    confirm_text = discord.ui.TextInput(
-        label="초기화 확인 (초기화 라고 입력)",
-        placeholder="초기화",
-        required=True,
-        max_length=10
-    )
+    channel_id = discord.ui.TextInput(label="채널 ID", placeholder="제한을 해제할 채널 ID를 입력하세요", required=True, max_length=30)
+    confirm_text = discord.ui.TextInput(label="초기화 확인 (초기화 라고 입력)", placeholder="초기화", required=True, max_length=10)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.manage_channels:
             return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
-        
-        channel = interaction.channel
-        if not channel.name.startswith("⚡"):
-            return await interaction.response.send_message("❌ 이 명령어는 초기화할 배너 채널 안에서 실행해주세요.", ephemeral=True)
 
         if self.confirm_text.value.strip() != "초기화":
             return await interaction.response.send_message("❌ '초기화' 글자를 정확히 입력해 주세요.", ephemeral=True)
 
         try:
-            overwrite = channel.overwrites_for(interaction.guild.default_role)
+            target_channel = interaction.guild.get_channel(int(self.channel_id.value.strip()))
+            if not target_channel:
+                return await interaction.response.send_message("❌ 해당 ID의 채널을 찾을 수 없습니다.", ephemeral=True)
+
+            overwrite = target_channel.overwrites_for(interaction.guild.default_role)
             overwrite.send_messages = True
-            await channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
+            await target_channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
             
-            embed = discord.Embed(
-                title="🔄 배너 채널 이용 제한(잠금)이 초기화되었습니다.",
-                description="스태프에 의해 채널 잠금이 해제되었습니다. 다시 홍보글을 작성하실 수 있습니다!",
-                color=discord.Color.blue()
-            )
-            await channel.send(embed=embed)
-            await interaction.response.send_message("✅ 성공적으로 제한이 초기화(잠금 해제)되었습니다.", ephemeral=True)
+            embed = discord.Embed(title="🔄 배너 채널 이용 제한(잠금)이 초기화되었습니다.", description="스태프에 의해 채널 잠금이 해제되었습니다. 다시 홍보글을 작성하실 수 있습니다!", color=discord.Color.blue())
+            await target_channel.send(embed=embed)
+            await interaction.response.send_message(f"✅ {target_channel.mention} 채널의 제한이 초기화되었습니다.", ephemeral=True)
+        except ValueError:
+            await interaction.response.send_message("❌ 채널 ID는 숫자만 입력해야 합니다.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ 초기화 실패: `{e}`", ephemeral=True)
 
 
-# --- 🛠️ 스태프 전용 배너 관리 패널 뷰 (버튼 2단 정렬 완벽 적용) ---
+# --- 🛠️ 스태프 전용 배너 관리 패널 뷰 (2단 정렬 유지) ---
 class BannerPanelView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
@@ -326,7 +256,7 @@ class BannerPanelView(discord.ui.View):
 class Banner(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.review_channel_id = 1491268664564121773  # 스태프 검토 및 로그 채널 ID
+        self.review_channel_id = 1491268664564121773
 
     async def cog_load(self):
         self.bot.add_view(BannerApplyView(self))
@@ -352,7 +282,6 @@ class Banner(commands.Cog):
             ),
             color=discord.Color.dark_embed()
         )
-        # 패널 먼저 전송 후 입력 명령어 삭제
         await ctx.send(embed=embed, view=BannerApplyView(self))
         try:
             await ctx.message.delete()
@@ -369,7 +298,6 @@ class Banner(commands.Cog):
             description=f"스태프 전용 배너 컨트롤 도구입니다. 아래 버튼을 통해 관리하세요.\n\n🔗 **[공식 문의처 바로가기]({INQUIRY_URL})**",
             color=discord.Color.dark_embed()
         )
-        # 패널 먼저 전송 후 입력 명령어 삭제
         await ctx.send(embed=embed, view=BannerPanelView(self))
         try:
             await ctx.message.delete()
@@ -381,9 +309,7 @@ class Banner(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
-        # 배너 채널 감지 (⚡ 기호로 시작하는 채널)
         if message.channel.name.startswith("⚡"):
-            # 1. 답장(끌올) 방지
             if message.reference:
                 try:
                     await message.delete()
@@ -392,7 +318,6 @@ class Banner(commands.Cog):
                     pass
                 return
 
-            # 2. 활동 금지 시간 체크 (새벽 00:31 ~ 아침 08:29) - 부스터 유저 예외 처리
             now_kst = datetime.now(KST)
             current_time_val = now_kst.hour * 60 + now_kst.minute
             
@@ -406,7 +331,6 @@ class Banner(commands.Cog):
                     pass
                 return
 
-            # 3. 홍보글 조건 검사 (사진 첨부 또는 링크 포함 + 10자 이상)
             has_media = len(message.attachments) > 0 or "http://" in message.content or "https://" in message.content or "discord.gg" in message.content
             if has_media and len(message.content.strip()) >= 10:
                 try:
