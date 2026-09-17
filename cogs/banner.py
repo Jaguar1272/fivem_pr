@@ -82,13 +82,14 @@ class BannerAnnouncementModal(discord.ui.Modal, title="📢 배너 채널 전체
         await interaction.followup.send(f"✅ 배너 전체 공지 전송 완료! (성공: {success}, 실패: {fail})", ephemeral=True)
 
 
-# --- ➕ 1. 배너 생성 Modal ---
+# --- ➕ 1. 배너 생성 Modal (카테고리 지정 완벽 추가) ---
 class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
     def __init__(self, cog):
         super().__init__()
         self.cog = cog
 
     user_id = discord.ui.TextInput(label="배너 이용자 유저 ID", placeholder="유저의 디스코드 ID를 입력하세요", required=True, max_length=30)
+    category_id = discord.ui.TextInput(label="카테고리 ID", placeholder="채널이 생성될 카테고리의 ID를 입력하세요", required=True, max_length=30)
     server_name = discord.ui.TextInput(label="서버 이름 (채널명에 반영)", placeholder="예: 홍보나라서버", required=True, max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -96,12 +97,23 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
             return await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
         
         guild = interaction.guild
+        
+        # 1. 유저 확인
         try:
             target_user = await guild.fetch_member(int(self.user_id.value.strip()))
+        except ValueError:
+            return await interaction.response.send_message("❌ 유저 ID는 숫자만 입력해야 합니다.", ephemeral=True)
         except Exception:
-            return await interaction.response.send_message("❌ 해당 유저를 찾을 수 없습니다. 올바른 유저 ID를 입력해주세요.", ephemeral=True)
+            return await interaction.response.send_message("❌ 해당 유저를 찾을 수 없습니다.", ephemeral=True)
 
-        category = interaction.channel.category
+        # 2. 카테고리 확인
+        try:
+            target_category = guild.get_channel(int(self.category_id.value.strip()))
+            if not isinstance(target_category, discord.CategoryChannel):
+                return await interaction.response.send_message("❌ 입력하신 ID는 카테고리가 아니거나 찾을 수 없습니다.", ephemeral=True)
+        except ValueError:
+            return await interaction.response.send_message("❌ 카테고리 ID는 숫자만 입력해야 합니다.", ephemeral=True)
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             target_user: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
@@ -109,15 +121,15 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         }
 
         try:
-            channel = await guild.create_text_channel(name=f"⚡ㆍ{self.server_name.value.strip()}", category=category, overwrites=overwrites, topic=f"banner_owner:{target_user.id}")
+            channel = await guild.create_text_channel(name=f"⚡ㆍ{self.server_name.value.strip()}", category=target_category, overwrites=overwrites, topic=f"banner_owner:{target_user.id}")
             embed = discord.Embed(title=f"⚡ {target_user.mention} 님의 배너 채널이 생성되었습니다!", description=f"환영합니다! 본 채널에서 홍보 규칙에 맞게 글을 작성해 주세요.\n\n🔗 **[공식 문의처]({INQUIRY_URL})**", color=discord.Color.green(), timestamp=discord.utils.utcnow())
             await channel.send(embed=embed)
-            await interaction.response.send_message(f"✅ 배너 채널이 성공적으로 생성되었습니다: {channel.mention}", ephemeral=True)
+            await interaction.response.send_message(f"✅ 배너 채널이 `{target_category.name}` 카테고리에 성공적으로 생성되었습니다: {channel.mention}", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ 채널 생성 실패: `{e}`", ephemeral=True)
 
 
-# --- ✏️ 2. 이름 변경 Modal (채널 ID 입력 복구됨) ---
+# --- ✏️ 2. 이름 변경 Modal ---
 class BannerRenameModal(discord.ui.Modal, title="✏️ 배너 채널 이름 변경"):
     def __init__(self, cog):
         super().__init__()
@@ -143,7 +155,7 @@ class BannerRenameModal(discord.ui.Modal, title="✏️ 배너 채널 이름 변
             await interaction.response.send_message(f"❌ 이름 변경 실패: `{e}`", ephemeral=True)
 
 
-# --- 🗑️ 3. 배너 삭제 Modal (유저 / 채널ID / 사유 입력 완벽 복구됨) ---
+# --- 🗑️ 3. 배너 삭제 Modal ---
 class BannerDeleteModal(discord.ui.Modal, title="🗑️ 배너 채널 삭제"):
     def __init__(self, cog):
         super().__init__()
@@ -181,7 +193,7 @@ class BannerDeleteModal(discord.ui.Modal, title="🗑️ 배너 채널 삭제"):
             await interaction.response.send_message(f"❌ 채널 삭제 실패: `{e}`", ephemeral=True)
 
 
-# --- 🔄 4. 제한 초기화 Modal (채널 ID 입력 복구됨) ---
+# --- 🔄 4. 제한 초기화 Modal ---
 class BannerResetModal(discord.ui.Modal, title="🔄 배너 이용 제한 초기화 (잠금 해제)"):
     def __init__(self, cog):
         super().__init__()
@@ -215,7 +227,7 @@ class BannerResetModal(discord.ui.Modal, title="🔄 배너 이용 제한 초기
             await interaction.response.send_message(f"❌ 초기화 실패: `{e}`", ephemeral=True)
 
 
-# --- 🛠️ 스태프 전용 배너 관리 패널 뷰 (2단 정렬 유지) ---
+# --- 🛠️ 스태프 전용 배너 관리 패널 뷰 (2단 정렬) ---
 class BannerPanelView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
