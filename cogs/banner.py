@@ -23,21 +23,25 @@ class PromoReviewView(discord.ui.View):
             return await interaction.response.send_message("❌ 스태프(메시지 관리 권한)만 처리할 수 있습니다.", ephemeral=True)
 
         kst = timezone(timedelta(hours=9))
-        now_ts = datetime.now(kst).timestamp()
+        now = datetime.now(kst)
+        now_ts = now.timestamp()
         
         self.cog.record_post(str(self.owner.id), self.today_date, now_ts)
         self.cog.pending_review.pop(self.owner.id, None)
 
         is_booster = any(role.id == self.cog.booster_role_id for role in self.owner.roles)
+        is_event = self.cog.is_event_period(now)
+        has_benefit = is_booster or is_event
+
         user_act = self.cog.get_user_activity(str(self.owner.id), self.today_date)
         count = user_act["count"]
 
-        if is_booster:
+        if has_benefit:
             if count >= 3:
-                await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "오늘 부스터 3회 작성 완료로 인한 채널 잠금")
-                status_msg = "🎉 승인 완료! 오늘 부스터 혜택(3회)을 모두 소진하여 채널이 내일까지 잠깁니다."
+                await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "오늘 작성 완료(3회)로 인한 채널 잠금")
+                status_msg = "🎉 승인 완료! 오늘 혜택(3회)을 모두 소진하여 채널이 내일까지 잠깁니다."
             else:
-                await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "부스터 홍보글 승인 완료로 인한 3시간 채널 잠금")
+                await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "홍보글 승인 완료로 인한 3시간 채널 잠금")
                 status_msg = f"🎉 승인 완료! 3시간 쿨타임 동안 채널이 잠깁니다. (남은 횟수: {3 - count}회)"
         else:
             await self.cog.lock_channel_for_owner(self.target_message.channel, self.owner, "배너 홍보글 승인 완료로 인한 채널 잠금")
@@ -46,7 +50,7 @@ class PromoReviewView(discord.ui.View):
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.green()
         embed.title = "✅ 배너 홍보글 승인 완료 (채널 잠금 적용)"
-        embed.set_footer(text=f"처리 스태프: {interaction.user.display_name} | 승인 일시: {datetime.now(kst).strftime('%Y-%m-%d %H:%M')}")
+        embed.set_footer(text=f"처리 스태프: {interaction.user.display_name} | 승인 일시: {now.strftime('%Y-%m-%d %H:%M')}")
 
         for child in self.children:
             child.disabled = True
@@ -138,11 +142,14 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         now_ts = now.timestamp()
 
         is_booster = any(role.id == self.cog.booster_role_id for role in target_user.roles)
+        is_event = self.cog.is_event_period(now)
+        has_benefit = is_booster or is_event
+
         user_act = self.cog.get_user_activity(str(target_user.id), today_date)
         count = user_act["count"]
         last_ts = user_act["last_timestamp"]
 
-        if is_booster:
+        if has_benefit:
             is_cooldown = (count > 0 and count < 3 and (now_ts - last_ts) < 10800)
             should_lock = (count >= 3) or is_cooldown
         else:
@@ -187,8 +194,14 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
                 color=discord.Color.blue(),
                 timestamp=discord.utils.utcnow()
             )
-            rules_embed.add_field(name="1️⃣ 작성 규칙", value="• 기본 유저 하루 1회 작성\n• 활동 금지 시간: 00:31 ~ 08:29", inline=False)
-            rules_embed.add_field(name="🚀 부스터 혜택", value="• 금지 시간 면제\n• 하루 최대 3회 작성 (3시간 쿨타임)\n• @everyone 멘션 허용", inline=False)
+            
+            if is_event:
+                rules_embed.title = "📜 [홍보나라] 배너 채널 개설 (추석 이벤트 적용 중!)"
+                rules_embed.add_field(name="🌕 추석 이벤트 혜택", value="• 전 유저 1일 최대 3회 작성 (3시간 쿨타임)\n• 심야 활동 금지 시간 면제\n• @everyone 멘션 허용", inline=False)
+            else:
+                rules_embed.add_field(name="1️⃣ 작성 규칙", value="• 기본 유저 하루 1회 작성\n• 활동 금지 시간: 00:31 ~ 08:29", inline=False)
+                rules_embed.add_field(name="🚀 부스터 혜택", value="• 금지 시간 면제\n• 하루 최대 3회 작성 (3시간 쿨타임)\n• @everyone 멘션 허용", inline=False)
+                
             rules_embed.add_field(name="🚨 금지 사항", value=f"• **스태프 개인 DM 문의 절대 금지**\n• 모든 문의는 [공식 문의처]({INQUIRY_URL}) 또는 티켓을 이용해 주세요.", inline=False)
             rules_embed.set_footer(text="문의사항은 위 공식 문의처 링크를 이용해 주시기 바랍니다.")
 
@@ -338,7 +351,6 @@ class BannerPanelView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
 
-    # 📌 여기에 row=0, row=1, row=2 속성을 추가하여 깔끔하게 2단 배치를 완료했습니다.
     @discord.ui.button(label="배너 생성", style=discord.ButtonStyle.primary, emoji="➕", custom_id="btn_panel_banner_create", row=0)
     async def btn_create(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BannerCreateModal(self.cog))
@@ -388,6 +400,12 @@ class Banner(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(BannerPanelView(self))
 
+    # 📌 추석 이벤트 기간 확인 함수 (9월 22일 ~ 9월 27일)
+    def is_event_period(self, current_time: datetime) -> bool:
+        event_start = datetime(2026, 9, 22, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+        event_end = datetime(2026, 9, 27, 23, 59, 59, tzinfo=timezone(timedelta(hours=9)))
+        return event_start <= current_time <= event_end
+
     def get_user_activity(self, user_id_str: str, today_date: str) -> dict:
         data = self.daily_activity.get(user_id_str)
         if isinstance(data, str):
@@ -424,12 +442,15 @@ class Banner(commands.Cog):
         now_ts = now.timestamp()
 
         is_booster = any(role.id == self.booster_role_id for role in owner.roles)
+        is_event = self.is_event_period(now)
+        has_benefit = is_booster or is_event
+
         user_act = self.get_user_activity(str(owner.id), today_date)
         
-        if not is_booster and (31 <= current_minute <= 509):
+        if not has_benefit and (31 <= current_minute <= 509):
             return
 
-        if is_booster:
+        if has_benefit:
             if user_act["count"] >= 3:
                 return
             if user_act["count"] > 0 and (now_ts - user_act["last_timestamp"] < 10800):
@@ -483,11 +504,14 @@ class Banner(commands.Cog):
                         continue
 
                     is_booster = any(role.id == self.booster_role_id for role in owner.roles)
+                    is_event = self.is_event_period(now)
+                    has_benefit = is_booster or is_event
+
                     user_act = self.get_user_activity(str(owner.id), today_date)
                     count = user_act["count"]
                     last_ts = user_act["last_timestamp"]
 
-                    if is_booster:
+                    if has_benefit:
                         is_cooldown = (count > 0 and count < 3 and (now_ts - last_ts) < 10800)
                         should_lock = (count >= 3) or is_cooldown
                     else:
@@ -575,7 +599,12 @@ class Banner(commands.Cog):
             return
 
         is_booster = any(role.id == self.booster_role_id for role in owner.roles)
-        badge = "💎 [부스터]" if is_booster else "👤 [일반]"
+        is_event = self.is_event_period(datetime.now(timezone(timedelta(hours=9))))
+        
+        if is_event:
+            badge = "🌕 [이벤트]"
+        else:
+            badge = "💎 [부스터]" if is_booster else "👤 [일반]"
 
         embed = discord.Embed(title=f"🔍 {badge} 짧은 홍보글 승인 검토", color=discord.Color.gold(), timestamp=discord.utils.utcnow())
         embed.add_field(name="소유자", value=f"{owner.mention}", inline=True)
@@ -627,11 +656,14 @@ class Banner(commands.Cog):
         owner_id_str = str(owner.id)
 
         is_booster = any(role.id == self.booster_role_id for role in owner.roles)
+        is_event = self.is_event_period(now)
+        has_benefit = is_booster or is_event
+
         user_act = self.get_user_activity(owner_id_str, today_date)
         count = user_act["count"]
         last_ts = user_act["last_timestamp"]
 
-        if not is_booster and (31 <= current_minute <= 509):
+        if not has_benefit and (31 <= current_minute <= 509):
             await message.delete()
             await message.channel.send(f"⚠️ {message.author.mention} 활동 금지 시간입니다.", delete_after=5)
             await self.send_user_dm(owner, "활동 금지 시간대(00:31~08:29) 작성", channel=message.channel)
@@ -669,12 +701,12 @@ class Banner(commands.Cog):
                 self.record_post(owner_id_str, today_date, now_ts)
                 new_count = self.get_user_activity(owner_id_str, today_date)["count"]
                 
-                if is_booster:
+                if has_benefit:
                     if new_count >= 3:
-                        await self.lock_channel_for_owner(message.channel, owner, "부스터 3회 소진 채널 잠금")
-                        await message.channel.send(f"✅ {message.author.mention} 부스터 혜택(3회) 모두 소진! 내일까지 채널 잠금", delete_after=10)
+                        await self.lock_channel_for_owner(message.channel, owner, "작성 3회 완료 채널 잠금")
+                        await message.channel.send(f"✅ {message.author.mention} 혜택(3회) 모두 소진! 내일까지 채널 잠금", delete_after=10)
                     else:
-                        await self.lock_channel_for_owner(message.channel, owner, "부스터 3시간 쿨타임 잠금")
+                        await self.lock_channel_for_owner(message.channel, owner, "3시간 쿨타임 잠금")
                         await message.channel.send(f"✅ {message.author.mention} 등록 완료! 3시간 쿨타임 시작 (남은 횟수: {3 - new_count}회)", delete_after=10)
                 else:
                     await self.lock_channel_for_owner(message.channel, owner, "작성 완료 채널 잠금")
@@ -686,12 +718,12 @@ class Banner(commands.Cog):
             await self.send_penalty_log("검토 중 중복 작성", message, owner)
             return
 
-        if is_booster:
+        if has_benefit:
             if count >= 3:
                 await message.delete()
-                await message.channel.send(f"⚠️ {message.author.mention} 오늘 부스터 횟수(3회)를 모두 소진하셨습니다.", delete_after=5)
-                await self.send_user_dm(owner, "부스터 하루 3회 소진", channel=message.channel)
-                await self.send_penalty_log("부스터 횟수 초과", message, owner)
+                await message.channel.send(f"⚠️ {message.author.mention} 오늘 작성 횟수(3회)를 모두 소진하셨습니다.", delete_after=5)
+                await self.send_user_dm(owner, "하루 3회 소진", channel=message.channel)
+                await self.send_penalty_log("횟수 초과", message, owner)
                 return
             if count > 0 and (now_ts - last_ts) < 10800:
                 remain = int(10800 - (now_ts - last_ts))
@@ -699,7 +731,7 @@ class Banner(commands.Cog):
                 await message.delete()
                 await message.channel.send(f"⚠️ {message.author.mention} 쿨타임 대기 중 ({h}시간 {m}분 남음)", delete_after=5)
                 await self.send_user_dm(owner, f"쿨타임 미준수 ({h}시간 {m}분 남음)", channel=message.channel)
-                await self.send_penalty_log("부스터 쿨타임 위반", message, owner)
+                await self.send_penalty_log("쿨타임 위반", message, owner)
                 return
         else:
             if count >= 1:
@@ -713,13 +745,13 @@ class Banner(commands.Cog):
             self.record_post(owner_id_str, today_date, now_ts)
             new_count = self.get_user_activity(owner_id_str, today_date)["count"]
             
-            if is_booster:
+            if has_benefit:
                 if new_count >= 3:
-                    await self.lock_channel_for_owner(message.channel, owner, "부스터 3회 완료 잠금")
-                    await message.channel.send(f"🔒 {message.author.mention} 부스터 3회 작성 완료! 내일까지 채널 잠금", delete_after=10)
+                    await self.lock_channel_for_owner(message.channel, owner, "작성 3회 완료 채널 잠금")
+                    await message.channel.send(f"🔒 {message.author.mention} 3회 작성 완료! 내일까지 채널 잠금", delete_after=10)
                 else:
-                    await self.lock_channel_for_owner(message.channel, owner, "부스터 3시간 쿨타임 잠금")
-                    await message.channel.send(f"🔒 {message.author.mention} 부스터 3시간 쿨타임 시작! (남은 횟수: {3 - new_count}회)", delete_after=10)
+                    await self.lock_channel_for_owner(message.channel, owner, "3시간 쿨타임 잠금")
+                    await message.channel.send(f"🔒 {message.author.mention} 3시간 쿨타임 시작! (남은 횟수: {3 - new_count}회)", delete_after=10)
             else:
                 await self.lock_channel_for_owner(message.channel, owner, "작성 완료 채널 잠금")
                 await message.channel.send(f"🔒 {message.author.mention} 작성 완료로 채널이 잠겼습니다.", delete_after=10)

@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 import asyncio
+import io
+from datetime import datetime, timezone, timedelta
 
 # 📌 지정된 공식 문의처 링크 상수 정의
 INQUIRY_URL = "https://discord.com/channels/1417202549295153305/1490073588655718541/1545055510590660739"
@@ -16,14 +18,38 @@ class TicketCloseView(discord.ui.View):
         if not interaction.user.guild_permissions.manage_channels:
             return await interaction.response.send_message("❌ 스태프(채널 관리 권한)만 티켓을 마감할 수 있습니다.", ephemeral=True)
         
-        await interaction.response.send_message("🔒 잠시 후 티켓 채널이 삭제됩니다...", ephemeral=True)
+        await interaction.response.send_message("🔒 잠시 후 티켓 대화 내역 추출 및 채널 삭제가 진행됩니다...", ephemeral=True)
         
-        # 📋 로그 채널에 티켓 마감 기록 전송
-        await self.cog.send_ticket_log("티켓 마감", interaction.channel, interaction.user)
+        channel = interaction.channel
+        
+        # 📋 1. 채널의 모든 메시지를 불러와서 텍스트 파일 생성 준비
+        messages = []
+        kst = timezone(timedelta(hours=9))
+        
+        async for msg in channel.history(limit=None, oldest_first=True):
+            time_str = msg.created_at.astimezone(kst).strftime('%Y-%m-%d %H:%M:%S')
+            author = msg.author.display_name
+            content = msg.clean_content
+            
+            # 첨부파일이 있는 경우 링크나 안내 추가
+            attachments_str = ""
+            if msg.attachments:
+                attachments_str = " " + " ".join([att.url for att in msg.attachments])
+                
+            messages.append(f"[{time_str}] {author}: {content}{attachments_str}")
+
+        log_content = f"--- [{channel.name}] 티켓 상담 대화 로그 ---\n" + "\n".join(messages)
+        log_file = discord.File(
+            io.BytesIO(log_content.encode('utf-8')), 
+            filename=f"{channel.name}_log.txt"
+        )
+
+        # 📋 2. 로그 채널에 임베드와 함께 .txt 파일 전송
+        await self.cog.send_ticket_log("티켓 마감", channel, interaction.user, log_file)
 
         await asyncio.sleep(2)
         try:
-            await interaction.channel.delete(reason=f"티켓 마감 by {interaction.user.name}")
+            await channel.delete(reason=f"티켓 마감 by {interaction.user.name}")
         except Exception:
             pass
 
@@ -104,7 +130,7 @@ class Ticket(commands.Cog):
         self.bot.add_view(TicketCreateView(self))
         self.bot.add_view(TicketCloseView(self))
 
-    async def send_ticket_log(self, action_name: str, channel: discord.TextChannel, user: discord.abc.User):
+    async def send_ticket_log(self, action_name: str, channel: discord.TextChannel, user: discord.abc.User, file: discord.File = None):
         log_channel = self.bot.get_channel(self.log_channel_id)
         if not log_channel:
             return
@@ -116,7 +142,11 @@ class Ticket(commands.Cog):
         )
         embed.add_field(name="관련 유저", value=f"{user.mention} (`{user.id}`)", inline=True)
         embed.add_field(name="채널 명", value=f"#{channel.name}", inline=True)
-        await log_channel.send(embed=embed)
+        
+        if file:
+            await log_channel.send(embed=embed, file=file)
+        else:
+            await log_channel.send(embed=embed)
 
     @commands.command(name="티켓패널", aliases=["고객센터", "티켓"])
     async def ticket_panel(self, ctx):
