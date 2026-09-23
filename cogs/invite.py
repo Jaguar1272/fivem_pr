@@ -9,7 +9,7 @@ class InviteTracker(commands.Cog):
         self.data_file = "invite_data.json"
         self.invites_cache = {}
         self.invite_counts = self.load_data()
-        self.log_channel_id = 1491268664564121773  # 기존 로그 채널 ID 활용
+        self.log_channel_id = 1552129605387948166  # 기존 로그 채널 ID 활용
 
     def load_data(self):
         if os.path.exists(self.data_file):
@@ -27,8 +27,9 @@ class InviteTracker(commands.Cog):
         except Exception:
             pass
 
-    async def cog_load(self):
-        await self.bot.wait_until_ready()
+    # 📌 cog_load 대신 on_ready 이벤트 리스너를 사용하여 봇이 완전히 켜진 후 초대 목록 캐시를 안전하게 불러옵니다.
+    @commands.Cog.listener()
+    async def on_ready(self):
         for guild in self.bot.guilds:
             try:
                 invites = await guild.invites()

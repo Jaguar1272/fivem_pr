@@ -10,6 +10,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.invites = True  # 📌 초대 추적(Invite Tracking)을 위한 필수 인텐트 추가
 
 # help_command=None 설정으로 기본 디스코드 help 명령어와 cogs/help.py 충돌 방지
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
@@ -39,7 +40,7 @@ async def reload_cog(ctx, extension: str = None):
                     await ctx.send(f"❌ `{cog_name}` 리로드 실패: `{e}`")
         return await ctx.send(f"🔄 전체 Cog 리로드 완료: `{', '.join(reloaded)}`")
 
-    # 2. 특정 파일만 지정했을 때 (예: !리로드 help) -> 해당 파일 리로드 또는 신규 로드
+    # 2. 특정 파일만 지정했을 때 (예: !리로드 invite) -> 해당 파일 리로드 또는 신규 로드
     try:
         await bot.reload_extension(f"cogs.{extension}")
         await ctx.send(f"✅ `cogs.{extension}` 리로드 완료!")
