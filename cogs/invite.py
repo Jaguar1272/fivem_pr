@@ -9,7 +9,7 @@ class InviteTracker(commands.Cog):
         self.data_file = "invite_data.json"
         self.invites_cache = {}
         self.invite_counts = self.load_data()
-        self.log_channel_id = 1552129605387948166  # 기존 로그 채널 ID 활용
+        self.log_channel_id = 1491268664564121773  # 기존 로그 채널 ID 활용
 
     def load_data(self):
         if os.path.exists(self.data_file):
@@ -27,7 +27,6 @@ class InviteTracker(commands.Cog):
         except Exception:
             pass
 
-    # 📌 cog_load 대신 on_ready 이벤트 리스너를 사용하여 봇이 완전히 켜진 후 초대 목록 캐시를 안전하게 불러옵니다.
     @commands.Cog.listener()
     async def on_ready(self):
         for guild in self.bot.guilds:
@@ -71,12 +70,11 @@ class InviteTracker(commands.Cog):
                 inviter = invite.inviter
                 break
 
-        # 캐시 업데이트
         self.invites_cache[guild.id] = {invite.code: invite.uses for invite in current_invites}
 
         if inviter and not inviter.bot:
             if inviter.id == member.id:
-                return  # 본인 초대 방지
+                return
 
             inviter_id_str = str(inviter.id)
             if inviter_id_str not in self.invite_counts:
@@ -88,7 +86,6 @@ class InviteTracker(commands.Cog):
             current_count = self.invite_counts[inviter_id_str]["count"]
             log_channel = guild.get_channel(self.log_channel_id)
 
-            # 15명 달성 시 스태프 로그 채널에 알림
             if current_count >= 15 and not self.invite_counts[inviter_id_str]["rewarded"]:
                 self.invite_counts[inviter_id_str]["rewarded"] = True
                 self.save_data()
@@ -100,6 +97,7 @@ class InviteTracker(commands.Cog):
                         color=discord.Color.gold(),
                         timestamp=discord.utils.utcnow()
                     )
+                    reward_embed.set_footer(text=guild.name, icon_url=guild.icon.url if guild.icon else None)
                     await log_channel.send(content=f"@everyone 🚨 **{inviter.mention}**님께서 초대 이벤트 보상 조건을 달성하셨습니다!", embed=reward_embed)
 
     @commands.command(name="초대확인", aliases=["내초대", "초대수"])
@@ -118,6 +116,7 @@ class InviteTracker(commands.Cog):
         )
         embed.add_field(name="현재 초대 인원", value=f"**{count}명** / 15명", inline=True)
         embed.add_field(name="목표까지 남은 인원", value=f"**{remain}명**", inline=True)
+        embed.set_footer(text=ctx.guild.name, icon_url=ctx.guild.icon.url if ctx.guild.icon else None)
         
         await ctx.send(embed=embed)
 
