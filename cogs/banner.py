@@ -5,7 +5,6 @@ import discord
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 
-# 📌 지정된 공식 문의처 링크 상수 정의
 INQUIRY_URL = "https://discord.com/channels/1417202549295153305/1490073588655718541/1545055510590660739"
 
 
@@ -98,22 +97,9 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
         super().__init__()
         self.cog = cog
 
-    user_input = discord.ui.TextInput(
-        label="👤 유저 (ID 또는 멘션)",
-        placeholder="예: 123456789012345678 또는 @유저",
-        required=True
-    )
-    category_type_input = discord.ui.TextInput(
-        label="📁 카테고리 번호 (1:맞, 2:커뮤, 3:RP, 4:팩션)",
-        placeholder="1, 2, 3, 4 중 하나 입력",
-        max_length=1,
-        required=True
-    )
-    channel_name_input = discord.ui.TextInput(
-        label="📝 생성할 채널명",
-        placeholder="채널 이름을 입력하세요. (⚡ㆍ자동 부착됨)",
-        required=True
-    )
+    user_input = discord.ui.TextInput(label="👤 유저 (ID 또는 멘션)", placeholder="예: 123456789012345678 또는 @유저", required=True)
+    category_type_input = discord.ui.TextInput(label="📁 카테고리 번호 (1:맞, 2:커뮤, 3:RP, 4:팩션)", placeholder="1, 2, 3, 4 중 하나 입력", max_length=1, required=True)
+    channel_name_input = discord.ui.TextInput(label="📝 생성할 채널명", placeholder="채널 이름을 입력하세요. (⚡ㆍ자동 부착됨)", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
@@ -158,12 +144,7 @@ class BannerCreateModal(discord.ui.Modal, title="➕ 배너 채널 생성"):
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
-            target_user: discord.PermissionOverwrite(
-                read_messages=True,
-                send_messages=not should_lock,
-                attach_files=True,
-                embed_links=True
-            ),
+            target_user: discord.PermissionOverwrite(read_messages=True, send_messages=not should_lock, attach_files=True, embed_links=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
         }
 
@@ -350,7 +331,7 @@ class BannerPanelView(discord.ui.View):
     async def btn_create(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BannerCreateModal(self.cog))
 
-    @discord.ui.button(label="이름 변경", style=discord.ButtonStyle.secondary, emoji="✏️️", custom_id="btn_panel_banner_rename", row=0)
+    @discord.ui.button(label="이름 변경", style=discord.ButtonStyle.secondary, emoji="✏️", custom_id="btn_panel_banner_rename", row=0)
     async def btn_rename(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BannerRenameModal(self.cog))
 
@@ -370,7 +351,7 @@ class BannerPanelView(discord.ui.View):
 class Banner(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.log_channel_id = 1552699894756679760  # 배너 전용 로그 채널 ID
+        self.log_channel_id = 1552699894756679760
         self.review_channel_id = 1500079277977112606
         self.exempt_channel_ids = [1520094510464499887]
         self.banner_role_id = 1417209680559603953
@@ -824,6 +805,7 @@ class Banner(commands.Cog):
             owner=owner
         )
 
+    # 📌 배너 패널 호출 명령어 수정 완료
     @commands.command(name="배너패널", aliases=["배너"])
     async def setup_banner_panel(self, ctx):
         if not ctx.author.guild_permissions.administrator and not ctx.author.guild_permissions.manage_channels:
